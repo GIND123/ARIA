@@ -606,9 +606,16 @@ def test_ac009_configured_term_is_caught_anywhere(repo, calibrated_case, annotat
     from aria.io.exporters.json_export import geometry_document
 
     document = geometry_document(data_for(repo, calibrated_case, annotator), project, annotator)
-    # The device manufacturer is retained by the default profile. If an
-    # institution declares it prohibited, the scan must find it.
-    findings = scan_payload(document, ["Example Imaging Systems"])
+
+    # The device manufacturer is retained by the default profile, so it is a
+    # value that genuinely reaches an export. If an institution declares it
+    # prohibited, the scan must find it there. The term is read from the case
+    # rather than hard coded, so the test does not depend on which device the
+    # sample images claim to come from.
+    manufacturer = document["manufacturer"]
+    assert manufacturer, "The fixture carries no manufacturer to search for"
+
+    findings = scan_payload(document, [manufacturer.split()[0]])
     assert findings, "A configured prohibited term was not detected"
     assert findings[0].kind == "prohibited_term"
     assert "manufacturer" in findings[0].path

@@ -157,7 +157,10 @@ def main() -> int:
     from aria.io.importer import Importer
 
     importer = Importer(repo, config.paths, config.settings)
-    samples = sorted((ROOT / "Test Artifacts").glob("*"))
+    samples = sorted(
+        p for p in (ROOT / "Test Artifacts").glob("*")
+        if p.suffix.lower() in (".dcm", ".png")
+    )
     summary = importer.import_files(
         [str(p) for p in samples], project.id, imported_by=admin.id
     )
@@ -460,7 +463,7 @@ def main() -> int:
 
     @step("capture a screenshot")
     def screenshot():
-        target_dir = ROOT / "docs"
+        target_dir = ROOT / "build" / "smoke_captures"
         target_dir.mkdir(parents=True, exist_ok=True)
         for module, layout, name in (
             ("annotate", "one_up", "screenshot_workspace.png"),
@@ -476,7 +479,7 @@ def main() -> int:
             for _ in range(6):
                 app.processEvents()
             window.grab().save(str(target_dir / name))
-        print(f"   screenshots written to {target_dir}")
+        print(f"   screenshots written to {target_dir} (scratch, not published)")
 
     # -- run -------------------------------------------------------------
     switch_modules()

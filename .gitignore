@@ -24,7 +24,10 @@ packaging/aria.iconset/
 .DS_Store
 Thumbs.db
 
-# Sample radiographs used as test fixtures. These are real clinical images, so
-# they are not published. The test suite skips the fixtures that need them when
-# the folder is absent.
-Test Artifacts/
+# The sample radiographs in Test Artifacts/ ARE published. Their pixel data is
+# real but every identifier, date, device value and patient characteristic was
+# replaced with a fabricated one by scripts/sanitise_fixtures.py. The
+# unsanitised originals are kept outside this repository.
+
+# Never publish unsanitised source images.
+*.original

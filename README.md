@@ -159,6 +159,19 @@ The self tests run against the installed code and say what each one checked.
 
 ## Install and run
 
+### Sample images
+
+`Test Artifacts/` holds four panoramic radiographs the test suite and the
+interface smoke run use. Their **pixel data is real and unchanged**; every
+identifier, date, device value and patient characteristic in them was replaced
+with a fabricated one before publication, so they exercise every code path
+while leading nowhere if followed. See
+[Test Artifacts/README.md](Test%20Artifacts/README.md) and
+`scripts/sanitise_fixtures.py`.
+
+The fixtures are optional. Tests that need them skip cleanly when the folder is
+absent, so you can drop in your own images instead.
+
 ### From source
 
 ```bash

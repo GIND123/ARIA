@@ -65,7 +65,10 @@ def build(window_size=(1680, 1000)):
     repo.create_project(project)
 
     importer = Importer(repo, config.paths, config.settings)
-    samples = sorted((ROOT / "Test Artifacts").glob("*"))
+    samples = sorted(
+        p for p in (ROOT / "Test Artifacts").glob("*")
+        if p.suffix.lower() in (".dcm", ".png")
+    )
     importer.import_files([str(p) for p in samples], project.id, imported_by=admin.id)
     cases = repo.list_cases(project.id)
     dicom_cases = [c for c in cases if c.source.source_format == "dicom"]
