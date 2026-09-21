@@ -1,0 +1,30 @@
+# Build output
+build/
+dist/
+*.spec.bak
+.venv-build/
+third_party_licences.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Generated at build time from the vector icon
+packaging/aria.ico
+packaging/aria.icns
+packaging/aria.png
+packaging/aria.iconset/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Sample radiographs used as test fixtures. These are real clinical images, so
+# they are not published. The test suite skips the fixtures that need them when
+# the folder is absent.
+Test Artifacts/

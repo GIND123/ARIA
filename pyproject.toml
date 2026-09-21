@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aria-annotator"
+version = "1.0.0"
+description = "ARIA: Anatomy aware Radiomorphometric Index Annotator for dental panoramic radiographs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [{name = "DiceMed"}]
+keywords = ["dicom", "annotation", "panoramic", "radiomorphometric", "mandible"]
+
+dependencies = [
+    "PySide6>=6.5",
+    "pydicom>=2.4",
+    "numpy>=1.24",
+    "Pillow>=10.0",
+    "psutil>=5.9",
+    "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-qt>=4.2", "pyinstaller>=6.0"]
+dicom-codecs = ["pylibjpeg>=2.0", "pylibjpeg-libjpeg", "pylibjpeg-openjpeg"]
+
+[project.gui-scripts]
+aria = "aria.__main__:main"
+
+[project.scripts]
+aria-cli = "aria.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aria*"]
+
+[tool.setuptools.package-data]
+aria = ["resources/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "acceptance: maps directly to an SRS acceptance criterion",
+    "smoke: fast startup integrity check run by the in application diagnostics",
+    "gui: requires a Qt application instance",
+    "slow: excluded from the fast smoke run",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

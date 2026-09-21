@@ -1,0 +1,15 @@
+ARIA: Anatomy aware Radiomorphometric Index Annotator
+Copyright DiceMed. All rights reserved.
+
+This software is supplied for research annotation work under the terms agreed
+with DiceMed. It is not a medical device. It does not diagnose osteoporosis, it
+does not estimate bone mineral density, and it does not recommend treatment.
+
+Third party components are used under their own licences. PySide6 and the Qt
+libraries it wraps are used under the GNU Lesser General Public License version
+3. The corresponding source for those libraries, and the means to replace them
+in an installed copy of this application, are available on request from
+DiceMed. Other components, including numpy, pydicom, Pillow, cryptography and
+psutil, are used under their respective permissive licences. A full list of
+components and licences is written to third_party_licences.txt during the
+build.

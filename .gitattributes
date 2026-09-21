@@ -1,0 +1,18 @@
+# Normalise line endings so the repository is consistent across Windows and
+# macOS checkouts, which both platforms build from.
+* text=auto eol=lf
+
+# Windows specific scripts keep CRLF so they run under PowerShell as checked out.
+*.ps1   text eol=crlf
+*.iss   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary assets are never line ending converted.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.dcm   binary
+*.zip   binary
+*.npz   binary
+*.db    binary

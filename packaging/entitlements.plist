@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- A packaged Python application needs these two to run under the
+         hardened runtime, because the interpreter compiles bytecode and loads
+         extension modules that are signed separately. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- The user chooses the images to import, so read access is requested for
+         files they select rather than for the whole disk. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- ARIA has no network layer. Neither client nor server access is
+         requested, which is the strongest statement the entitlements can make
+         about that. -->
+</dict>
+</plist>
