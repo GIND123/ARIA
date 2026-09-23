@@ -182,7 +182,9 @@ python -m aria
 Python 3.10 or later. Windows 10 or later, or macOS 11 or later.
 
 The first launch checks the workstation, creates an administrator account and a
-project, then offers the guided tour.
+project, then offers the guided tour. An administrator imports and manages but
+does not annotate, so a one person study should also tick the annotator account
+on the account page and sign in as that account to draw.
 
 ### Building an installable application
 

@@ -126,7 +126,10 @@ class CaseBrowser(QWidget):
         self.open_button.clicked.connect(lambda: self._open(False))
         self.open_read_only_button.clicked.connect(lambda: self._open(True))
         self.import_button.clicked.connect(self.import_requested)
+        self.tree.currentItemChanged.connect(lambda *_: self._update_actions())
+        self.tree.itemSelectionChanged.connect(self._update_actions)
         self.controller.case_list_changed.connect(self.refresh)
+        self._update_actions()
 
     # -- projects ------------------------------------------------------------
 
@@ -160,9 +163,14 @@ class CaseBrowser(QWidget):
 
     def refresh(self) -> None:
         project = self.controller.project
+        # A refresh rebuilds every row, which would otherwise drop the current
+        # item and leave Open with nothing to act on. The selection is carried
+        # across the rebuild instead.
+        previous = self.selected_case_id()
         self.tree.clear()
         if project is None:
             self.summary.setText("No project selected.")
+            self._update_actions()
             return
 
         assignment = self.assignment_filter.currentData()
@@ -229,7 +237,17 @@ class CaseBrowser(QWidget):
             n = counts.get(state.value, 0)
             if n:
                 parts.append(f"{n} {state.display.lower()}")
-        self.summary.setText(", ".join(parts) + f".   Showing {len(cases)}.")
+        line = ", ".join(parts) + f".   Showing {len(cases)}."
+        if not cases and total:
+            line += "   No case matches the current filters."
+        self.summary.setText(line)
+
+        # Leave a case selected, so Open is immediately meaningful. Without
+        # this, the list after an import has no current row and Open does
+        # nothing at all.
+        if not self.select_case(previous) and self.tree.topLevelItemCount():
+            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        self._update_actions()
 
     def _thumbnail(self, case_id: str) -> QIcon | None:
         if case_id in self._thumbnail_cache:
@@ -253,10 +271,43 @@ class CaseBrowser(QWidget):
         item = self.tree.currentItem()
         return item.data(0, Qt.UserRole) if item else ""
 
+    def select_case(self, case_id: str) -> bool:
+        """Make ``case_id`` the current row. Returns whether it is listed."""
+        if not case_id:
+            return False
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            if item.data(0, Qt.UserRole) == case_id:
+                self.tree.setCurrentItem(item)
+                self.tree.scrollToItem(item)
+                self._update_actions()
+                return True
+        return False
+
+    def _update_actions(self) -> None:
+        """An action that cannot do anything is disabled rather than silent."""
+        has_selection = bool(self.selected_case_id())
+        self.open_button.setEnabled(has_selection)
+        self.open_read_only_button.setEnabled(has_selection)
+        hint = (
+            "Open the selected case for annotation."
+            if has_selection
+            else "Select a case in the list first."
+        )
+        self.open_button.setToolTip(hint)
+        self.open_read_only_button.setToolTip(
+            "Open the selected case without taking the edit lock."
+            if has_selection else hint
+        )
+
     def _open(self, read_only: bool) -> None:
         case_id = self.selected_case_id()
-        if case_id:
-            self.case_open_requested.emit(case_id, read_only)
+        if not case_id:
+            self.controller.status_message.emit(
+                "Select a case in the list before opening it.", 5000
+            )
+            return
+        self.case_open_requested.emit(case_id, read_only)
 
     def _on_double_click(self, item, _column) -> None:
         self.case_open_requested.emit(item.data(0, Qt.UserRole), False)

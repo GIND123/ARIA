@@ -46,6 +46,13 @@ against an account, which is what makes the history meaningful. The password is
 stored as a memory hard digest, never as text, so there is no way to recover it.
 Create a second administrator account afterwards.
 
+An administrator imports images, manages the project and reads annotations, but
+does not draw them: annotation is the annotator's and the reviewer's work. If
+you are running the study on your own, tick **I will also be annotating in this
+study** on that page. It creates an annotator account alongside the
+administrator one, and you sign in as that account to draw. You can add the same
+account later from Administration, Accounts.
+
 **It creates a project.** A project holds its own cases, label schema,
 tolerances and privacy profile.
 
@@ -139,6 +146,11 @@ images of one study stay linked, while the mapping cannot be reversed.
 
 A colour PNG is converted to grey for display only. The colour channels are kept
 and the original file is untouched.
+
+**After the import, the Cases list holds what arrived**, with the newest import
+selected. Choose **Open** there, or double click the case, to take it into the
+Annotate module. If Open is greyed out, nothing is selected: click a case in the
+list first.
 
 ---
 
