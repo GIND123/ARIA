@@ -135,13 +135,23 @@ class TestReadOnlyRolesAreGivenARemedy:
     def test_an_administrator_is_pointed_at_an_annotator_account(
         self, window, repo, admin, annotator, sample_dicom
     ):
+        # The account is renamed to something that is not a substring of the
+        # notice's ordinary wording. With the fixture name "ann" this assertion
+        # passes against the unfixed code purely because "annotations" contains
+        # it, which would let the behaviour regress unnoticed.
+        annotator.username = "draws_cases"
+        repo.update_user(annotator, "Renamed for this test.")
+
         summary = _import(window, admin, sample_dicom)
         window.controller.open_case(summary.imported[0].case.id)
 
         reason = window.controller.read_only_reason
         assert window.controller.read_only
-        assert annotator.username in reason, (
+        assert "draws_cases" in reason, (
             f"The notice names no account to annotate from: {reason}"
+        )
+        assert "sign in" in reason.lower(), (
+            f"The notice names an account but not what to do with it: {reason}"
         )
 
     def test_without_an_annotator_account_the_remedy_is_to_create_one(
