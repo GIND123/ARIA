@@ -92,6 +92,15 @@ to follow.
 writes its audit record inside the same transaction as the change, and every
 write to an annotation set checks the expected edit counter.
 
+Every listing it returns is ordered on a key that cannot tie. Timestamps are
+recorded to the millisecond, so a construction that creates several annotations
+at once gives them all the same one, and a sort on the timestamp alone would
+leave the remaining order to the query planner. Listing order is what decides
+the annotation array of `annotations.json`, the rows of `annotations.csv` and
+the identifiers COCO assigns, so each of those clauses ends on a column that is
+unique. The same stored work therefore exports the same bytes, whatever order
+it happened to be drawn in.
+
 ### aria.ui
 
 `controller.py` is the only place the interface talks to the store. Panels emit

@@ -346,7 +346,7 @@ class Repository:
         sql = "SELECT * FROM projects"
         if not include_archived:
             sql += " WHERE archived = 0"
-        sql += " ORDER BY created_at DESC"
+        sql += " ORDER BY created_at DESC, id ASC"
         return [self._row_to_project(r) for r in self.db.query(sql)]
 
     def update_project(self, project: Project, detail: str = "") -> None:
@@ -459,7 +459,7 @@ class Repository:
             clauses.append("pseudonym LIKE ?")
             params.append(f"%{search}%")
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"SELECT * FROM cases{where} ORDER BY imported_at DESC, pseudonym ASC"
+        sql = f"SELECT * FROM cases{where} ORDER BY imported_at DESC, pseudonym ASC, id ASC"
         if limit:
             sql += " LIMIT ? OFFSET ?"
             params.extend([limit, offset])
@@ -647,7 +647,8 @@ class Repository:
 
     def list_sets_for_case(self, case_id: str) -> list:
         rows = self.db.query(
-            "SELECT * FROM annotation_sets WHERE case_id = ? ORDER BY kind, created_at",
+            "SELECT * FROM annotation_sets WHERE case_id = ?"
+            " ORDER BY kind, created_at, id",
             (case_id,),
         )
         return [self._row_to_set(r) for r in rows]
@@ -850,10 +851,20 @@ class Repository:
         return self._row_to_annotation(row) if row else None
 
     def list_annotations(self, set_id: str, include_deleted: bool = False) -> list:
+        """Every annotation in a set, in an order defined by the stored rows.
+
+        The timestamps carry milliseconds, so a construction that produces
+        several annotations at once gives them all the same one. Sorting on the
+        timestamp alone therefore leaves the engine to settle the tie however it
+        likes, and that order reaches annotations.json, the rows of
+        annotations.csv and the identifiers COCO hands out. The identifier
+        breaks the tie so that the same stored set always exports the same
+        bytes.
+        """
         sql = "SELECT * FROM annotations WHERE set_id = ?"
         if not include_deleted:
             sql += " AND deleted = 0"
-        sql += " ORDER BY created_at ASC"
+        sql += " ORDER BY created_at ASC, id ASC"
         return [self._row_to_annotation(r) for r in self.db.query(sql, (set_id,))]
 
     @staticmethod
@@ -1000,7 +1011,7 @@ class Repository:
 
     def list_quality_flags(self, set_id: str) -> list:
         rows = self.db.query(
-            "SELECT * FROM quality_flags WHERE set_id = ? ORDER BY created_at", (set_id,)
+            "SELECT * FROM quality_flags WHERE set_id = ? ORDER BY created_at, id", (set_id,)
         )
         return [
             QualityFlagRecord(
@@ -1203,12 +1214,12 @@ class Repository:
 
     def list_reviews(self, set_id: str) -> list:
         rows = self.db.query(
-            "SELECT * FROM reviews WHERE set_id = ? ORDER BY created_at DESC", (set_id,)
+            "SELECT * FROM reviews WHERE set_id = ? ORDER BY created_at DESC, id ASC", (set_id,)
         )
         out: list = []
         for r in rows:
             comments = self.db.query(
-                "SELECT * FROM review_comments WHERE review_id = ? ORDER BY created_at",
+                "SELECT * FROM review_comments WHERE review_id = ? ORDER BY created_at, id",
                 (r["id"],),
             )
             out.append(
@@ -1398,12 +1409,13 @@ class Repository:
         if project_id:
             row = self.db.query_one(
                 "SELECT * FROM calibration_sets WHERE user_id = ? AND project_id = ?"
-                " ORDER BY created_at DESC LIMIT 1",
+                " ORDER BY created_at DESC, id ASC LIMIT 1",
                 (user_id, project_id),
             )
         else:
             row = self.db.query_one(
-                "SELECT * FROM calibration_sets WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+                "SELECT * FROM calibration_sets WHERE user_id = ?"
+                " ORDER BY created_at DESC, id ASC LIMIT 1",
                 (user_id,),
             )
         if not row:
@@ -1514,7 +1526,7 @@ class Repository:
         if project_id:
             sql += " WHERE project_id = ?"
             params = (project_id,)
-        sql += " ORDER BY created_at DESC LIMIT ?"
+        sql += " ORDER BY created_at DESC, id ASC LIMIT ?"
         return [dict(r) for r in self.db.query(sql, (*params, limit))]
 
     # -- statistics ----------------------------------------------------------
