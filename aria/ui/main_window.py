@@ -1245,8 +1245,22 @@ class MainWindow(QMainWindow):
 
         dialog = ImportDialog(self.controller, paths, self)
         dialog.exec()
+        if self.controller.case_data is None:
+            self.set_module("cases")
         self.case_browser.refresh()
         self.controller.case_list_changed.emit()
+
+        # Land on what was just imported, so the next click opens it rather
+        # than acting on nothing.
+        summary = getattr(dialog, "summary", None)
+        imported = summary.imported if summary is not None else []
+        if imported:
+            self.case_browser.select_case(imported[0].case.id)
+            self.statusBar().showMessage(
+                f"{summary.summary_line()}   Select a case and choose Open to "
+                f"start annotating.",
+                8000,
+            )
 
     # -- tools ---------------------------------------------------------------
 

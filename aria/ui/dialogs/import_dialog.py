@@ -97,6 +97,8 @@ class ImportDialog(QDialog):
         self.inspections: list = []
         self.worker = None
         self.import_worker = None
+        #: Set once the import finishes, so the caller can show what arrived.
+        self.summary = None
 
         self.setWindowTitle("Import images")
         self.setMinimumSize(880, 560)
@@ -292,6 +294,7 @@ class ImportDialog(QDialog):
         self.import_worker.start()
 
     def _on_imported(self, summary) -> None:
+        self.summary = summary
         self.progress.setFormat(summary.summary_line())
         self.heading.setText(summary.summary_line())
 
