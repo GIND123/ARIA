@@ -134,20 +134,50 @@ class CaseBrowser(QWidget):
     # -- projects ------------------------------------------------------------
 
     def reload_projects(self) -> None:
-        current = self.project_combo.currentData()
+        """Rebuild the selector so that it agrees with the open project.
+
+        The list below the selector is drawn from the controller, so the
+        selector has to follow the controller rather than its own previous
+        value. Taking the previous value as the truth let the two drift apart:
+        the selector named one project while the list underneath it held
+        another project's cases, and nothing on screen said which one a newly
+        imported case had gone into.
+        """
+        projects = self.controller.repo.list_projects()
+        open_project = self.controller.project
+
         self.project_combo.blockSignals(True)
         self.project_combo.clear()
-        projects = self.controller.repo.list_projects()
         for project in projects:
             self.project_combo.addItem(project.name, project.id)
-        if current:
-            index = self.project_combo.findData(current)
-            if index >= 0:
-                self.project_combo.setCurrentIndex(index)
+
+        index = (
+            self.project_combo.findData(open_project.id)
+            if open_project is not None
+            else -1
+        )
+        if index < 0 and projects:
+            # Either nothing was open, or what was open has since been archived
+            # or removed. Either way the selector falls back to the first entry
+            # and the controller is moved to match it below.
+            index = 0
+        self.project_combo.setCurrentIndex(index)
         self.project_combo.blockSignals(False)
 
-        if projects and self.controller.project is None:
-            self.controller.set_project(projects[0])
+        chosen = self.project_combo.currentData()
+        if chosen:
+            if open_project is None or open_project.id != chosen:
+                project = self.controller.repo.get_project(chosen)
+                if project is not None:
+                    # This emits case_list_changed, which redraws the list.
+                    self.controller.set_project(project)
+                    return
+        elif open_project is not None:
+            # The last project was archived while it was the one open. The
+            # selector has nothing left to name, so the controller cannot go on
+            # holding a project it no longer offers.
+            self.controller.set_project(None)
+            return
         self.refresh()
 
     def _on_project_changed(self, _index: int) -> None:
