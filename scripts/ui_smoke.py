@@ -328,6 +328,44 @@ def main() -> int:
         window.probe.update_cursor(500.0, 400.0)
         app.processEvents()
 
+    @step("move every slider in the image display panel")
+    def display_panel():
+        panel = window.display_panel
+        assert panel.rows["brightness"].isEnabled(), "The panel is inert with a case open"
+
+        before = window.controller.image.pixels.copy()
+        for key, value in (
+            ("brightness", 65), ("contrast", 240),
+            ("sharpness", 55), ("magnification", 350),
+        ):
+            panel.rows[key].slider.setValue(value)
+            app.processEvents()
+
+        assert window.controller.display_settings.filter_name == "unsharp"
+        assert abs(window.canvas.zoom_factor() - 3.5) < 0.05
+        assert (window.controller.image.pixels == before).all(), (
+            "A display control altered the pixels a measurement is taken from"
+        )
+
+        window.reset_view()
+        app.processEvents()
+        assert panel.values()["brightness"] == 0
+        assert panel.values()["contrast"] == 100
+        assert panel.values()["sharpness"] == 0
+
+    @step("recover panels that were left unreachable")
+    def panel_recovery():
+        window.module_dock.hide()
+        window._recover_unreachable_panels()
+        assert not window.module_dock.isHidden(), "The module panel stayed hidden"
+
+        window.display_dock.hide()
+        window.display_dock.setFloating(True)
+        window.reset_panel_layout()
+        app.processEvents()
+        for dock in (window.module_dock, window.display_dock):
+            assert not dock.isHidden() and not dock.isFloating()
+
     @step("switch every layout")
     def layouts():
         from aria.ui.viewer.view_frame import LAYOUTS
@@ -492,6 +530,8 @@ def main() -> int:
     absent()
     texture()
     display()
+    display_panel()
+    panel_recovery()
     layouts()
     undo_redo()
     measurements()

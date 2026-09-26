@@ -195,6 +195,18 @@ def main() -> int:
     )
     capture(window, app, "annotate", "one_up", out / "workspace_zoom.png", zoom=region)
 
+    # The display controls on their own, for the section of the guide that
+    # explains them. Shown with values set, because every slider parked at its
+    # default says nothing about what it does.
+    window.set_module("annotate")
+    for key, value in (("brightness", 30), ("contrast", 150), ("sharpness", 45)):
+        window.display_panel.rows[key].slider.setValue(value)
+    settle(app, 300)
+    window.display_dock.grab().save(str(out / "panel_image_display.png"))
+    print("  panel_image_display.png")
+    window.reset_view()
+    settle(app, 300)
+
     capture(window, app, "measure", "one_up", out / "module_measure.png")
     capture(window, app, "cases", "one_up", out / "module_cases.png")
     capture(window, app, "review", "side_by_side", out / "module_review.png")

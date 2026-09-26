@@ -110,6 +110,7 @@ class MainWindow(QMainWindow):
 
         self._build_workspace()
         self._build_module_panel()
+        self._build_display_dock()
         self._build_actions()
         self._build_menus()
         self._build_toolbars()
@@ -202,6 +203,35 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.module_dock)
         self.resizeDocks([self.module_dock], [METRICS.panel_width], Qt.Horizontal)
 
+    def _build_display_dock(self) -> None:
+        """Brightness, contrast, magnification and sharpness, always to hand.
+
+        These belong beside the image rather than inside a module, because they
+        are adjusted while annotating rather than instead of it. Switching to a
+        Display module to raise the contrast and back again to place the next
+        point would make a reading aid feel like a detour.
+        """
+        from .panels.display_panel import DisplayPanel
+
+        self.display_dock = QDockWidget("Image display", self)
+        self.display_dock.setObjectName("displayDock")
+        self.display_dock.setAllowedAreas(
+            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
+        )
+        self.display_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.display_panel = DisplayPanel(self.controller, self)
+        self.display_dock.setWidget(self.display_panel)
+        self.display_dock.setMinimumWidth(METRICS.panel_min_width)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.display_dock)
+        self.resizeDocks([self.display_dock], [METRICS.panel_width], Qt.Horizontal)
+
+        self.display_panel.control_changed.connect(self._on_display_control)
+        self.display_panel.reset_requested.connect(self.reset_view)
+
     def _build_actions(self) -> None:
         def action(text, slot=None, shortcut=None, icon_name="", tip="", checkable=False):
             a = QAction(text, self)
@@ -280,6 +310,10 @@ class MainWindow(QMainWindow):
             "Show original pixels", self.toggle_original, "O", "image",
             "Show the image with no windowing or filtering, exactly as stored.",
             checkable=True,
+        )
+        self.action_reset_layout = action(
+            "Reset panel layout", self.reset_panel_layout, tip=
+            "Put the side panels back where they started, docked and visible.",
         )
         self.action_labels = action(
             "Show labels", self.toggle_labels, "L", "grade",
@@ -421,6 +455,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.action_probe)
         view_menu.addSeparator()
         view_menu.addAction(self.module_dock.toggleViewAction())
+        view_menu.addAction(self.display_dock.toggleViewAction())
+        view_menu.addAction(self.action_reset_layout)
 
         annotate_menu = bar.addMenu("&Annotate")
         self.tool_group = QActionGroup(self)
@@ -667,6 +703,11 @@ class MainWindow(QMainWindow):
             canvas.selection_changed.connect(self._on_canvas_selection)
             canvas.ruler_measured.connect(self._on_ruler)
 
+        # Only the main canvas drives the magnification slider. Letting the
+        # side panes drive it as well would have the three of them overwriting
+        # each other every time the layout changed.
+        self.canvas.zoom_changed.connect(self._on_zoom_changed)
+
     # -- modules -------------------------------------------------------------
 
     def set_module(self, key: str) -> None:
@@ -776,6 +817,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_case_closed(self) -> None:
+        self.display_panel.set_enabled_for_case(False)
         self.canvas.set_image(None)
         for pane in self.workspace.panes.values():
             pane.canvas.set_image(None)
@@ -794,6 +836,8 @@ class MainWindow(QMainWindow):
         self.probe.update_display(settings)
         self.probe.update_zoom(self.canvas.zoom_factor())
         self.action_invert.setChecked(settings.invert)
+        self.display_panel.set_enabled_for_case(True)
+        self.display_panel.load_from(settings, zoom=self.canvas.zoom_factor())
 
         for key in ("right", "left", "overview", "compare"):
             pane = self.workspace.panes.get(key)
@@ -1029,14 +1073,57 @@ class MainWindow(QMainWindow):
         for pane in self.workspace.visible_panes():
             pane.canvas.apply_display_settings(settings)
         self.probe.update_display(settings)
+        self.display_panel.load_from(settings)
         if self.controller.case_data is not None:
             self.repo.set_display_settings(
                 self.controller.case_data.case.id, settings.to_dict()
             )
 
+    def _on_display_control(self, key: str) -> None:
+        """One of the four sliders moved.
+
+        Magnification is a property of the view and the other three are
+        properties of the drawing, so they take different routes: the first
+        changes the transform, the rest are written into the display settings
+        and persisted with the case.
+        """
+        if self.controller.image is None:
+            return
+
+        if key == "magnification":
+            # The main pane only, which is the one the slider reads back from.
+            # In the four pane layout the side panes are framed deliberately on
+            # the right and left mandible, and driving them from here would
+            # flatten all three to one magnification.
+            self.canvas.set_zoom(self.display_panel.zoom_factor())
+            return
+
+        settings = self.controller.display_settings
+        settings.brightness = self.display_panel.brightness()
+        settings.contrast = self.display_panel.contrast()
+
+        sharpness = self.display_panel.sharpness()
+        if sharpness > 0.0:
+            # Sharpening is the unsharp mask that the image pipeline already
+            # carries, driven from here rather than from the filter menu.
+            settings.filter_name = "unsharp"
+            settings.filter_strength = sharpness
+        elif settings.filter_name == "unsharp":
+            settings.filter_name = "none"
+
+        self._apply_display(settings)
+        if hasattr(self, "filter_actions") and settings.filter_name in self.filter_actions:
+            self.filter_actions[settings.filter_name].setChecked(True)
+
+    def _on_zoom_changed(self, factor: float) -> None:
+        """Zooming by wheel, keyboard or toolbar moves the slider too, so the
+        panel never claims a magnification the image is not at."""
+        self.display_panel.load_from(self.controller.display_settings, zoom=factor)
+
     def _on_display_changed(self, settings) -> None:
         self.controller.display_settings = settings
         self.probe.update_display(settings)
+        self.display_panel.load_from(settings)
 
     def toggle_labels(self) -> None:
         visible = self.action_labels.isChecked()
@@ -1243,22 +1330,36 @@ class MainWindow(QMainWindow):
 
         dialog = ImportDialog(self.controller, paths, self)
         dialog.exec()
-        if self.controller.case_data is None:
-            self.set_module("cases")
         self.case_browser.refresh()
         self.controller.case_list_changed.emit()
 
         # Land on what was just imported, so the next click opens it rather
-        # than acting on nothing.
+        # than acting on nothing. Importing while a case is open used to leave
+        # the person looking at the case they already had, with the new one
+        # selected in a list they could not see, which made importing a second
+        # case look as though it had done nothing at all. The open case is not
+        # disturbed: it stays open, and the message says so.
         summary = getattr(dialog, "summary", None)
         imported = summary.imported if summary is not None else []
-        if imported:
-            self.case_browser.select_case(imported[0].case.id)
-            self.statusBar().showMessage(
-                f"{summary.summary_line()}   Select a case and choose Open to "
-                f"start annotating.",
-                8000,
+        if not imported:
+            if self.controller.case_data is None:
+                self.set_module("cases")
+            return
+
+        open_case = self.controller.case_data
+        self.set_module("cases")
+        self.case_browser.select_case(imported[0].case.id)
+        if open_case is not None:
+            message = (
+                f"{summary.summary_line()}   {open_case.case.pseudonym} is "
+                f"still open. Choose Open to move to an imported case."
             )
+        else:
+            message = (
+                f"{summary.summary_line()}   Select a case and choose Open to "
+                f"start annotating."
+            )
+        self.statusBar().showMessage(message, 8000)
 
     # -- tools ---------------------------------------------------------------
 
@@ -1496,6 +1597,62 @@ class MainWindow(QMainWindow):
         self.repo.release_all_locks()
         super().closeEvent(event)
 
+    def reset_panel_layout(self) -> None:
+        """Put the side panels back, docked, visible and the right size.
+
+        The way out of every arrangement that leaves a panel unreachable: a
+        panel floated off the edge of a screen that is no longer attached, one
+        hidden from a context menu, or one restored from a session on a
+        differently shaped display.
+        """
+        for dock, area in (
+            (self.module_dock, Qt.LeftDockWidgetArea),
+            (self.display_dock, Qt.RightDockWidgetArea),
+        ):
+            dock.setFloating(False)
+            self.addDockWidget(area, dock)
+            dock.show()
+            dock.raise_()
+        self.resizeDocks(
+            [self.module_dock, self.display_dock],
+            [METRICS.panel_width, METRICS.panel_width],
+            Qt.Horizontal,
+        )
+        self.statusBar().showMessage("The side panels are back in place.", 4000)
+
+    def _recover_unreachable_panels(self) -> None:
+        """Undo a restore that would leave a panel with no way back.
+
+        A saved layout is replayed without asking whether it still makes sense.
+        The module panel holds the case list and every annotation tool, so a
+        session that starts with it hidden, or floating on a screen that is not
+        there any more, looks exactly like the panel having disappeared. It is
+        recoverable from the View menu, but only by somebody who already knows
+        that is where to look.
+        """
+        from PySide6.QtGui import QGuiApplication
+
+        def reachable(dock) -> bool:
+            if dock.isHidden():
+                return False
+            if not dock.isFloating():
+                return True
+            # A floating panel counts only if it is actually on a screen that
+            # is attached now, which one saved on a second monitor may not be.
+            centre = dock.frameGeometry().center()
+            return any(
+                screen.availableGeometry().contains(centre)
+                for screen in QGuiApplication.screens()
+            )
+
+        if not reachable(self.module_dock):
+            self.reset_panel_layout()
+
+        if not reachable(self.display_dock):
+            self.display_dock.setFloating(False)
+            self.addDockWidget(Qt.RightDockWidgetArea, self.display_dock)
+            self.display_dock.show()
+
     def restore_geometry(self) -> None:
         from PySide6.QtCore import QByteArray
 
@@ -1507,6 +1664,7 @@ class MainWindow(QMainWindow):
             )
         if self.settings.window_state:
             self.restoreState(QByteArray.fromHex(self.settings.window_state.encode()))
+        self._recover_unreachable_panels()
         if self.settings.layout in LAYOUTS:
             self.set_layout(self.settings.layout)
             self.layout_actions[self.settings.layout].setChecked(True)
