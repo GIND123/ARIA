@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
-    QWidget,
     QWizard,
     QWizardPage,
 )
@@ -289,42 +288,21 @@ class AccountPage(QWizardPage):
         note.setProperty("dim", True)
         layout.addWidget(note)
 
-        # An administrator manages the study but does not annotate in it. On a
-        # one person study that leaves every case read only after the first
-        # import, with the remedy buried in the Administration module, so the
-        # annotator account is offered here instead.
-        self.also_annotate = QCheckBox(
-            "I will also be annotating in this study", self
+        # No question about what this account may do. It is the first one, so
+        # it administers the study, and an administrator annotates as well.
+        role_note = QLabel(
+            "This account can do everything: import images, annotate and "
+            "measure them, export the results, and add further accounts. "
+            "Colleagues you add later are annotators, which is the same "
+            "without the study settings.",
+            self,
         )
-        self.also_annotate.setToolTip(
-            "Annotation is the annotator's work and needs its own account. "
-            "This creates one alongside the administrator account."
-        )
-        layout.addWidget(self.also_annotate)
-
-        self.annotator_box = QWidget(self)
-        annotator_form = QFormLayout(self.annotator_box)
-        annotator_form.setContentsMargins(20, 2, 0, 0)
-        annotator_form.setSpacing(9)
-        self.annotator_username = QLineEdit(self.annotator_box)
-        self.annotator_username.setPlaceholderText("Used to sign in to annotate")
-        self.annotator_password = QLineEdit(self.annotator_box)
-        self.annotator_password.setEchoMode(QLineEdit.Password)
-        self.annotator_confirm = QLineEdit(self.annotator_box)
-        self.annotator_confirm.setEchoMode(QLineEdit.Password)
-        annotator_form.addRow("Annotator username", self.annotator_username)
-        annotator_form.addRow("Annotator password", self.annotator_password)
-        annotator_form.addRow("Confirm password", self.annotator_confirm)
-        self.annotator_box.setVisible(False)
-        layout.addWidget(self.annotator_box)
+        role_note.setWordWrap(True)
+        role_note.setProperty("dim", True)
+        layout.addWidget(role_note)
         layout.addStretch(1)
 
-        self.also_annotate.toggled.connect(self.annotator_box.setVisible)
-        self.also_annotate.toggled.connect(lambda _c: self._validate())
-        for field in (
-            self.username, self.display_name, self.password, self.confirm,
-            self.annotator_username, self.annotator_password, self.annotator_confirm,
-        ):
+        for field in (self.username, self.display_name, self.password, self.confirm):
             field.textChanged.connect(self._validate)
 
         self.registerField("username*", self.username)
@@ -342,9 +320,6 @@ class AccountPage(QWizardPage):
             rules.append("a symbol")
         self.policy.setText("The password needs " + ", ".join(rules) + ".")
 
-    def wants_annotator_account(self) -> bool:
-        return self.also_annotate.isChecked()
-
     def _validate(self) -> None:
         problems = []
         if not self.username.text().strip():
@@ -352,21 +327,6 @@ class AccountPage(QWizardPage):
         problems.extend(self.config.settings.validate_password(self.password.text()))
         if self.password.text() != self.confirm.text():
             problems.append("The two passwords do not match.")
-
-        if self.also_annotate.isChecked():
-            annotator = self.annotator_username.text().strip()
-            if not annotator:
-                problems.append("An annotator username is required.")
-            elif annotator == self.username.text().strip():
-                problems.append("The annotator account needs its own username.")
-            problems.extend(
-                f"Annotator password: {p[0].lower()}{p[1:]}"
-                for p in self.config.settings.validate_password(
-                    self.annotator_password.text()
-                )
-            )
-            if self.annotator_password.text() != self.annotator_confirm.text():
-                problems.append("The two annotator passwords do not match.")
 
         if problems:
             self.status.setText("   ".join(problems))
@@ -455,7 +415,6 @@ class FirstRunWizard(QWizard):
         self.config = config
         self.created_user = None
         self.created_project = None
-        self.created_annotator = None
         self.show_tour = True
 
         self.setWindowTitle(f"{APP_NAME} setup")
@@ -493,24 +452,8 @@ class FirstRunWizard(QWizard):
         self.repo.set_actor(user)
         self.created_user = user
 
-        # The administrator account exists from here on, so a later failure
-        # warns and carries on rather than unwinding a created account.
-        if self.account_page.wants_annotator_account():
-            try:
-                self.created_annotator = service.create_account(
-                    self.account_page.annotator_username.text().strip(),
-                    self.account_page.display_name.text().strip(),
-                    Role.ANNOTATOR,
-                    self.account_page.annotator_password.text(),
-                    must_change=False,
-                )
-            except ValueError as exc:
-                QMessageBox.warning(
-                    self, "The annotator account could not be created",
-                    f"{exc}\n\nThe administrator account was created. Add the "
-                    f"annotator account from Administration, Accounts.",
-                )
-
+        # One account, one password, and it can do the whole job. Colleagues
+        # are added afterwards from Administration, Accounts.
         schema = ProjectSchema()
         schema.mandible_mode = self.project_page.mandible.currentData()
         project = Project(

@@ -130,79 +130,91 @@ class TestOpeningAnImportedCase:
         assert messages and "select a case" in messages[0].lower()
 
 
-class TestReadOnlyRolesAreGivenARemedy:
-    """A role that cannot annotate is told what to do about it (FR 046)."""
+class TestNoRoleIsStuckUnableToAnnotate:
+    """There is no longer a role that reads a case without being able to
+    annotate it (FR 046).
 
-    def test_an_administrator_is_pointed_at_an_annotator_account(
-        self, window, repo, admin, annotator, sample_dicom
-    ):
-        # The account is renamed to something that is not a substring of the
-        # notice's ordinary wording. With the fixture name "ann" this assertion
-        # passes against the unfixed code purely because "annotations" contains
-        # it, which would let the behaviour regress unnoticed.
-        annotator.username = "draws_cases"
-        repo.update_user(annotator, "Renamed for this test.")
+    This replaces a remedy. An administrator used to open every case read only
+    and be told to find an annotator account to sign in as. Both roles annotate
+    now, so the wall the remedy explained is gone and there is nothing to
+    explain.
+    """
 
+    def test_an_administrator_can_annotate(self, window, admin, sample_dicom):
         summary = _import(window, admin, sample_dicom)
+        window.controller.open_case(summary.imported[0].case.id)
+
+        assert not window.controller.read_only, window.controller.read_only_reason
+        assert window.controller.read_only_reason == ""
+
+    def test_an_annotator_can_annotate(self, paths, repo, annotator, project, sample_dicom):
+        """Driven through a window of its own, because the account is decided
+        by the session rather than set afterwards."""
+        from PySide6.QtWidgets import QApplication
+
+        from aria.config import Config
+        from aria.security.auth import AuthService
+        from aria.ui.main_window import MainWindow
+
+        config = Config(paths)
+        config.settings.first_run_completed = True
+        config.settings.tour_completed = True
+        config.settings.backup_on_launch = False
+        app = QApplication.instance() or QApplication([])
+        repo.set_actor(annotator)
+        session = AuthService(repo, config.settings).start_session(annotator)
+
+        w = MainWindow(repo, paths, config, session)
+        try:
+            w.controller.set_project(project)
+            outcome = w.controller.importer().import_file(
+                str(sample_dicom), project.id, imported_by=annotator.id
+            )
+            assert outcome.succeeded, outcome.error_message
+            w.controller.open_case(outcome.case.id)
+
+            assert not w.controller.read_only, w.controller.read_only_reason
+        finally:
+            w.controller.close_case()
+            w.deleteLater()
+            app.processEvents()
+
+    def test_every_role_can_annotate(self):
+        from aria.core.models import Role
+        from aria.security.auth import Permission, permissions_for
+
+        for role in Role.ALL:
+            assert Permission.EDIT_ANNOTATIONS in permissions_for(role), (
+                f"The {role} role cannot annotate"
+            )
+
+    def test_a_deactivated_account_is_told_which_account_it_is(
+        self, window, repo, admin, sample_dicom
+    ):
+        """The one way a case still opens read only on account grounds. It
+        names the account rather than a role, because the role is not the
+        problem any more."""
+        summary = _import(window, admin, sample_dicom)
+        window.controller.close_case()
+
+        admin.active = False
         window.controller.open_case(summary.imported[0].case.id)
 
         reason = window.controller.read_only_reason
         assert window.controller.read_only
-        assert "draws_cases" in reason, (
-            f"The notice names no account to annotate from: {reason}"
-        )
-        assert "sign in" in reason.lower(), (
-            f"The notice names an account but not what to do with it: {reason}"
-        )
-
-    def test_without_an_annotator_account_the_remedy_is_to_create_one(
-        self, window, admin, sample_dicom
-    ):
-        summary = _import(window, admin, sample_dicom)
-        window.controller.open_case(summary.imported[0].case.id)
-
-        reason = window.controller.read_only_reason
-        assert "Administration" in reason, reason
+        assert admin.username in reason, reason
+        assert "not active" in reason.lower(), reason
 
 
-class TestFirstRunOffersAnAnnotatorAccount:
-    """A one person study needs an account that can annotate (FR 046)."""
+class TestFirstRunGivesOnePersonOneAccount:
+    """Setup creates one account, and it can do everything (FR 046).
 
-    def test_the_wizard_creates_the_annotator_account_when_asked(
-        self, paths, repo, monkeypatch
-    ):
-        monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    It used to ask whether you would also be annotating, and create a second
+    account with its own password if you said yes. With an administrator able
+    to annotate there is nothing to ask and nothing to issue twice.
+    """
 
-        from PySide6.QtWidgets import QApplication
-
-        from aria.config import Config
-        from aria.core.models import Role
-        from aria.ui.dialogs.first_run import FirstRunWizard
-
-        QApplication.instance() or QApplication([])
-        config = Config(paths)
-
-        wizard = FirstRunWizard(repo, paths, config, None)
-        wizard.account_page.username.setText("solo_admin")
-        wizard.account_page.display_name.setText("Solo Researcher")
-        wizard.account_page.password.setText("SoloStudy-2026")
-        wizard.account_page.confirm.setText("SoloStudy-2026")
-        wizard.account_page.also_annotate.setChecked(True)
-        wizard.account_page.annotator_username.setText("solo_ann")
-        wizard.account_page.annotator_password.setText("SoloAnnotate-2026")
-        wizard.account_page.annotator_confirm.setText("SoloAnnotate-2026")
-        wizard.project_page.name.setText("Solo project")
-        wizard.accept()
-
-        assert wizard.created_user.role == Role.ADMIN
-        assert wizard.created_annotator is not None
-        assert wizard.created_annotator.role == Role.ANNOTATOR
-
-        from aria.security.auth import Permission, has_permission
-
-        assert has_permission(wizard.created_annotator, Permission.EDIT_ANNOTATIONS)
-
-    def test_the_annotator_account_is_optional(self, paths, repo, monkeypatch):
+    def _wizard(self, paths, repo, monkeypatch):
         monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
         from PySide6.QtWidgets import QApplication
@@ -212,15 +224,50 @@ class TestFirstRunOffersAnAnnotatorAccount:
 
         QApplication.instance() or QApplication([])
         wizard = FirstRunWizard(repo, paths, Config(paths), None)
-        wizard.account_page.username.setText("team_admin")
-        wizard.account_page.display_name.setText("Team Administrator")
-        wizard.account_page.password.setText("TeamStudy-2026")
-        wizard.account_page.confirm.setText("TeamStudy-2026")
-        wizard.project_page.name.setText("Team project")
+        wizard.account_page.username.setText("solo")
+        wizard.account_page.display_name.setText("Solo Researcher")
+        wizard.account_page.password.setText("SoloStudy-2026")
+        wizard.account_page.confirm.setText("SoloStudy-2026")
+        wizard.project_page.name.setText("Solo project")
+        return wizard
+
+    def test_the_one_account_can_do_the_whole_job(self, paths, repo, monkeypatch):
+        from aria.core.models import Role
+        from aria.security.auth import Permission, has_permission
+
+        wizard = self._wizard(paths, repo, monkeypatch)
         wizard.accept()
 
-        assert wizard.created_user is not None
-        assert wizard.created_annotator is None
+        user = wizard.created_user
+        assert user.role == Role.ADMIN
+        for permission in (
+            Permission.IMPORT_CASES,
+            Permission.EDIT_ANNOTATIONS,
+            Permission.SUBMIT_ANNOTATIONS,
+            Permission.EXPORT_DATA,
+            Permission.CREATE_BUNDLE,
+            Permission.MANAGE_USERS,
+        ):
+            assert has_permission(user, permission), (
+                f"The first account cannot {permission.value.replace('_', ' ')}"
+            )
+
+    def test_only_one_account_is_created(self, paths, repo, monkeypatch):
+        wizard = self._wizard(paths, repo, monkeypatch)
+        wizard.accept()
+
+        assert len(repo.list_users()) == 1
+
+    def test_setup_asks_nothing_about_roles(self, paths, repo, monkeypatch):
+        """The second password, and the question that led to it, are gone."""
+        wizard = self._wizard(paths, repo, monkeypatch)
+        page = wizard.account_page
+
+        for gone in (
+            "also_annotate", "annotator_username",
+            "annotator_password", "annotator_confirm",
+        ):
+            assert not hasattr(page, gone), f"Setup still asks about {gone}"
 
 
 class TestTheProjectSelectorFollowsTheOpenProject:

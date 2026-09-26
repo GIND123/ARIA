@@ -416,19 +416,6 @@ class TestAudit:
         assert not broken["valid"]
         assert broken["broken_at_sequence"] == 3
 
-    def test_auditor_view_withholds_coordinates(self):
-        from aria.core.audit import redact_for_auditor
-
-        payload = {
-            "class_key": "mcw_line",
-            "coordinates": [1.0, 2.0, 3.0, 4.0],
-            "nested": {"coordinates": [5.0, 6.0]},
-        }
-        redacted = redact_for_auditor(payload)
-        assert redacted["class_key"] == "mcw_line"
-        assert "withheld" in redacted["coordinates"]
-        assert "withheld" in redacted["nested"]["coordinates"]
-
 
 # ---------------------------------------------------------------------------
 # Permissions
@@ -436,30 +423,82 @@ class TestAudit:
 
 
 class TestPermissions:
-    """Least privilege, checked in one place (NFR 001)."""
+    """Two roles, least privilege between them (NFR 001).
 
-    def test_role_matrix(self):
+    An annotator does the work on a case from import through to export. An
+    administrator does that and runs the study as well. The tests below pin
+    both halves: that the work is not split across accounts, and that running
+    the study is still a separate thing to be given deliberately.
+    """
+
+    def test_there_are_two_roles(self):
+        from aria.core.models import Role
+
+        assert Role.ALL == (Role.ANNOTATOR, Role.ADMIN)
+        assert len(Role.DISPLAY) == 2
+
+    def test_an_annotator_does_the_whole_job_on_a_case(self):
+        """The report behind this: a case could be opened and worked on, and
+        then the next image could not be imported and the finished one could
+        not be exported."""
+        from aria.core.models import Role
+        from aria.security.auth import Permission, permissions_for
+
+        whole_job = {
+            Permission.IMPORT_CASES, Permission.VIEW_CASES, Permission.VIEW_IMAGE,
+            Permission.EDIT_ANNOTATIONS, Permission.SUBMIT_ANNOTATIONS,
+            Permission.DELETE_ANNOTATIONS, Permission.REVIEW_CASES,
+            Permission.EXPORT_DATA, Permission.CREATE_BUNDLE,
+            Permission.CONFIRM_LATERALITY, Permission.VALIDATE_CALIBRATION,
+        }
+        missing = whole_job - permissions_for(Role.ANNOTATOR)
+        assert not missing, (
+            f"An annotator cannot {sorted(p.value for p in missing)}"
+        )
+
+    def test_running_the_study_is_the_only_difference(self):
+        from aria.core.models import Role
+        from aria.security.auth import (
+            STUDY_ADMINISTRATION, permissions_for,
+        )
+
+        annotator = permissions_for(Role.ANNOTATOR)
+        admin = permissions_for(Role.ADMIN)
+
+        assert admin - annotator == STUDY_ADMINISTRATION
+        assert not annotator - admin, "An annotator holds something an admin does not"
+
+    def test_an_annotator_cannot_run_the_study(self):
         from aria.core.models import Role
         from aria.security.auth import Permission, permissions_for
 
         annotator = permissions_for(Role.ANNOTATOR)
-        assert Permission.EDIT_ANNOTATIONS in annotator
-        assert Permission.MANAGE_USERS not in annotator
-        assert Permission.IMPORT_CASES not in annotator
+        for permission in (
+            Permission.MANAGE_USERS, Permission.MANAGE_PROJECTS,
+            Permission.MANAGE_SCHEMA, Permission.MANAGE_THRESHOLDS,
+            Permission.MANAGE_POLICY, Permission.APPROVE_CALIBRATION_SET,
+        ):
+            assert permission not in annotator, (
+                f"An annotator can {permission.value.replace('_', ' ')}"
+            )
 
-        auditor = permissions_for(Role.AUDITOR)
-        assert Permission.VIEW_AUDIT in auditor
-        assert Permission.EDIT_ANNOTATIONS not in auditor
-        assert Permission.EXPORT_DATA not in auditor
+    def test_a_new_account_defaults_to_the_least_privileged_role(self):
+        """The account dialog selects the first role in the list."""
+        from aria.core.models import Role
 
-        admin = permissions_for(Role.ADMIN)
-        assert Permission.MANAGE_SCHEMA in admin
-        assert Permission.EDIT_ANNOTATIONS not in admin, (
-            "The administrator role manages the project rather than annotating"
-        )
+        assert Role.ALL[0] == Role.ANNOTATOR
 
-        reviewer = permissions_for(Role.REVIEWER)
-        assert {Permission.REVIEW_CASES, Permission.EDIT_ANNOTATIONS} <= reviewer
+    def test_every_role_is_named_and_described(self):
+        from aria.core.models import Role
+        from aria.security.auth import ROLE_PERMISSIONS
+        from aria.ui.dialogs.account_dialog import ROLE_DESCRIPTIONS
+
+        for role in Role.ALL:
+            assert role in Role.DISPLAY, f"{role} has no display name"
+            assert role in ROLE_DESCRIPTIONS, f"{role} has no description"
+            assert role in ROLE_PERMISSIONS, f"{role} has no permissions"
+        assert set(ROLE_DESCRIPTIONS) == set(Role.ALL)
+        assert set(ROLE_PERMISSIONS) == set(Role.ALL)
 
     def test_require_explains_the_refusal(self, annotator):
         from aria.security.auth import Permission, require

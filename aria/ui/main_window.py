@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.models import Role
 from ..core.schema import Presence, Side, get_class
 from ..io.image import AVAILABLE_FILTERS
 from ..security.auth import Permission
@@ -737,12 +736,11 @@ class MainWindow(QMainWindow):
             if permission is not None and not self.controller.can(permission):
                 self.module_combo.removeItem(index)
 
-        is_auditor = user is not None and user.role == Role.AUDITOR
         for a in (
-            self.action_import, self.action_import_folder, self.action_construct,
-            self.action_submit, self.action_mark_absent, self.action_delete,
+            self.action_construct, self.action_submit,
+            self.action_mark_absent, self.action_delete,
         ):
-            a.setEnabled(not is_auditor and self.controller.can(Permission.EDIT_ANNOTATIONS))
+            a.setEnabled(self.controller.can(Permission.EDIT_ANNOTATIONS))
         self.action_import.setEnabled(self.controller.can(Permission.IMPORT_CASES))
         self.action_import_folder.setEnabled(self.controller.can(Permission.IMPORT_CASES))
         self.action_export.setEnabled(self.controller.can(Permission.EXPORT_DATA))

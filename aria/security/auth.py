@@ -5,8 +5,9 @@ who obtains the database cannot trade cheap parallel hardware for speed the way
 they can against a plain iterated hash. The parameters are recorded alongside
 each digest so they can be raised later without invalidating existing accounts.
 
-Permissions are least privilege and are checked in one place. The auditor role
-is read only over history and never sees editable clinical content.
+Permissions are least privilege and are checked in one place. There are two
+roles: an annotator does the work on a case from import through to export, and
+an administrator does that and runs the study as well.
 """
 
 from __future__ import annotations
@@ -63,42 +64,30 @@ class Permission(str, Enum):
 
 
 #: Role to permission mapping. Any permission not listed is denied.
+#: What administering a study means, as opposed to doing the work in it.
+#: These are the permissions that separate the two roles, and the only ones an
+#: annotator does not hold.
+STUDY_ADMINISTRATION = {
+    Permission.MANAGE_USERS,
+    Permission.MANAGE_PROJECTS,
+    Permission.MANAGE_SCHEMA,
+    Permission.MANAGE_THRESHOLDS,
+    Permission.MANAGE_POLICY,
+    Permission.APPROVE_CALIBRATION_SET,
+}
+
+#: An annotator does the whole job on a case: brings the image in, marks it up,
+#: measures it, reviews it and takes the result out again. Written as every
+#: permission except the administration set, so that a capability added later
+#: reaches the people doing the work without anybody having to remember to add
+#: it here.
+_ANNOTATOR = {p for p in Permission if p not in STUDY_ADMINISTRATION}
+
 ROLE_PERMISSIONS: dict = {
-    Role.ANNOTATOR: {
-        Permission.VIEW_CASES, Permission.VIEW_IMAGE, Permission.EDIT_ANNOTATIONS,
-        Permission.SUBMIT_ANNOTATIONS, Permission.DELETE_ANNOTATIONS,
-        Permission.CONFIRM_LATERALITY, Permission.RUN_DIAGNOSTICS,
-    },
-    Role.REVIEWER: {
-        Permission.VIEW_CASES, Permission.VIEW_IMAGE, Permission.EDIT_ANNOTATIONS,
-        Permission.SUBMIT_ANNOTATIONS, Permission.DELETE_ANNOTATIONS,
-        Permission.REVIEW_CASES, Permission.ADJUDICATE, Permission.ASSIGN_CASES,
-        Permission.VIEW_AGREEMENT, Permission.VALIDATE_CALIBRATION,
-        Permission.CONFIRM_LATERALITY, Permission.EXPORT_DATA,
-        Permission.VIEW_AUDIT, Permission.RUN_DIAGNOSTICS,
-    },
-    Role.ADMIN: {
-        Permission.VIEW_CASES, Permission.VIEW_IMAGE, Permission.IMPORT_CASES,
-        Permission.ASSIGN_CASES, Permission.VIEW_AGREEMENT,
-        Permission.VALIDATE_CALIBRATION, Permission.CONFIRM_LATERALITY,
-        Permission.EXPORT_DATA, Permission.CREATE_BUNDLE,
-        Permission.MANAGE_USERS, Permission.MANAGE_PROJECTS,
-        Permission.MANAGE_SCHEMA, Permission.MANAGE_THRESHOLDS,
-        Permission.MANAGE_POLICY, Permission.APPROVE_CALIBRATION_SET,
-        Permission.VIEW_AUDIT, Permission.VERIFY_AUDIT, Permission.RUN_DIAGNOSTICS,
-    },
-    Role.DATA_MANAGER: {
-        Permission.VIEW_CASES, Permission.VIEW_IMAGE, Permission.IMPORT_CASES,
-        Permission.ASSIGN_CASES, Permission.EXPORT_DATA, Permission.CREATE_BUNDLE,
-        Permission.VALIDATE_CALIBRATION, Permission.VIEW_AUDIT,
-        Permission.RUN_DIAGNOSTICS,
-    },
-    Role.AUDITOR: {
-        # An auditor reads history. They do not open the annotation tools and
-        # they cannot change clinical content.
-        Permission.VIEW_CASES, Permission.VIEW_AUDIT, Permission.VERIFY_AUDIT,
-        Permission.RUN_DIAGNOSTICS,
-    },
+    Role.ANNOTATOR: set(_ANNOTATOR),
+    #: An administrator does everything an annotator does, and runs the study
+    #: as well.
+    Role.ADMIN: set(_ANNOTATOR) | STUDY_ADMINISTRATION,
 }
 
 
@@ -259,10 +248,7 @@ class AuthService:
         return self.repo.create_user(user)
 
     def _next_pseudonym(self, role: str) -> str:
-        prefix = {
-            Role.ANNOTATOR: "ANN", Role.REVIEWER: "REV", Role.ADMIN: "ADM",
-            Role.DATA_MANAGER: "DAT", Role.AUDITOR: "AUD",
-        }.get(role, "USR")
+        prefix = {Role.ANNOTATOR: "ANN", Role.ADMIN: "ADM"}.get(role, "USR")
         existing = [u.pseudonym for u in self.repo.list_users(include_inactive=True)]
         n = 1
         while f"{prefix}-{n:03d}" in existing:
@@ -383,6 +369,10 @@ def production_access_blocked(user: User, require_calibration: bool) -> str:
     if not require_calibration:
         return ""
     if user.role != Role.ANNOTATOR:
+        # Only the annotator role is gated. A reviewer approves a calibration
+        # set, so gating the roles that do the approving, or a lead
+        # investigator who is the only account on the study, would be a lock
+        # with nobody on the other side of it to open it.
         return ""
     if user.calibration_passed:
         return ""

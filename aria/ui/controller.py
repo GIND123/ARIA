@@ -31,7 +31,6 @@ from ..core.models import (
     QualityFlagRecord,
     Review,
     ReviewComment,
-    Role,
     SetKind,
     utc_now,
 )
@@ -207,17 +206,15 @@ class Controller(QObject):
         if force_read_only:
             reason = "This case was opened read only."
         elif read_only and self.user is not None:
-            # Saying only which role cannot annotate leaves the person stuck,
-            # which is the state a solo administrator lands in after their
-            # first import. The remedy belongs in the same sentence.
+            # Both roles annotate, so reaching here means the account itself
+            # cannot: it has been deactivated. Saying which, rather than naming
+            # a role, is the difference between a person knowing what to do and
+            # staring at a case they cannot touch.
             reason = (
-                f"The {self.user.role_display.lower()} role reads annotations "
-                f"without editing them."
+                f"The account {self.user.username} is not active, so this case "
+                f"opens read only. An administrator can reactivate it in "
+                f"Administration, Accounts."
             )
-            if self.can(Permission.MANAGE_USERS):
-                reason += " " + self._annotator_account_hint()
-            else:
-                reason += " Ask an administrator for an annotator account."
         elif read_only:
             reason = "This account has read only access."
         else:
@@ -230,7 +227,9 @@ class Controller(QObject):
         if not read_only and self.user is not None:
             from ..security.auth import production_access_blocked
 
-            calibration_notice = production_access_blocked(self.user, True)
+            calibration_notice = production_access_blocked(
+                self.user, self.schema.require_calibration_for_submission
+            )
 
         if not read_only:
             try:
@@ -281,22 +280,6 @@ class Controller(QObject):
         if calibration_notice:
             self.status_message.emit(calibration_notice, 9000)
         return True
-
-    def _annotator_account_hint(self) -> str:
-        """Name the account to annotate from, or say how to make one."""
-        names = [
-            u.username for u in self.repo.list_users()
-            if u.role in (Role.ANNOTATOR, Role.REVIEWER)
-        ]
-        if names:
-            return (
-                f"Sign out and sign in as an annotating account "
-                f"({', '.join(names[:3])}) to draw on this case."
-            )
-        return (
-            "Annotating needs an annotator account: create one in "
-            "Administration, Accounts, then sign in as that account."
-        )
 
     def close_case(self) -> None:
         if self.case_data is None:

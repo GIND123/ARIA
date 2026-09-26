@@ -21,24 +21,15 @@ from ..theme import PALETTE
 
 ROLE_DESCRIPTIONS = {
     Role.ANNOTATOR: (
-        "Creates and edits annotations, and submits them for review. Cannot "
-        "import, export or change project settings."
-    ),
-    Role.REVIEWER: (
-        "Accepts, returns or adjudicates an annotation set, validates "
-        "calibration and reads agreement reports. Can also annotate."
+        "Does the work on a case from beginning to end: imports images, "
+        "annotates and measures them, reviews them and exports the result. "
+        "Cannot add accounts or change the label schema, the tolerances or "
+        "the privacy policy."
     ),
     Role.ADMIN: (
-        "Manages projects, label schemas, accounts, calibration policy, "
-        "thresholds and exports."
-    ),
-    Role.DATA_MANAGER: (
-        "Imports deidentified studies, assigns cases, runs dataset quality "
-        "checks and produces exports and bundles."
-    ),
-    Role.AUDITOR: (
-        "Reads the immutable history without editing clinical content. "
-        "Coordinate lists are withheld from the audit view for this role."
+        "Everything an annotator does, and runs the study as well: accounts, "
+        "projects, the label schema, tolerances, privacy policy and "
+        "calibration approval."
     ),
 }
 

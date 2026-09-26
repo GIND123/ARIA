@@ -1,8 +1,7 @@
 """The audit module: read the immutable history.
 
-An auditor reads this without being able to edit clinical content. Coordinate
-lists are replaced by counts and extents in the detail view, so the shape of a
-change is visible without exposing the annotation itself.
+Every account can read the history. It is append only and hash chained, so
+what it shows is what happened, and the chain can be verified from here.
 """
 
 from __future__ import annotations
@@ -26,8 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.audit import AuditEvent, redact_for_auditor
-from ...core.models import Role
+from ...core.audit import AuditEvent
 from ...security.auth import Permission
 from ..theme import PALETTE
 from ..widgets.common import (
@@ -186,23 +184,18 @@ class AuditPanel(QWidget):
         if not path:
             return
         records = self.controller.repo.audit_records(limit=1_000_000)
-        auditor = (
-            self.controller.user is not None
-            and self.controller.user.role == Role.AUDITOR
-        )
         payload = {
             "exported_at": __import__("aria.core.models", fromlist=["utc_now"]).utc_now(),
             "n_records": len(records),
             "chain_verification": self.controller.repo.verify_audit_chain(),
-            "redacted_for_auditor": auditor,
             "records": [
                 {
                     "sequence": r.sequence, "timestamp": r.timestamp,
                     "actor": r.actor_name, "event": r.event,
                     "object_type": r.object_type, "object_id": r.object_id,
                     "case_id": r.case_id, "detail": r.detail,
-                    "before": _payload(r.before_json, auditor),
-                    "after": _payload(r.after_json, auditor),
+                    "before": _payload(r.before_json),
+                    "after": _payload(r.after_json),
                     "record_hash": r.record_hash,
                     "previous_hash": r.previous_hash,
                 }
@@ -385,10 +378,6 @@ class AuditPanel(QWidget):
         if record is None:
             return
 
-        auditor = (
-            self.controller.user is not None
-            and self.controller.user.role == Role.AUDITOR
-        )
         self.detail_grid.set("sequence", "Record", str(record.sequence))
         self.detail_grid.set("when", "When", record.timestamp)
         self.detail_grid.set("who", "Who", record.actor_name or "system")
@@ -398,8 +387,8 @@ class AuditPanel(QWidget):
         self.detail_grid.set("digest", "Digest", record.record_hash[:32], mono=True)
         self.detail_grid.set("previous", "Previous digest", record.previous_hash[:32], mono=True)
 
-        before = _payload(record.before_json, auditor)
-        after = _payload(record.after_json, auditor)
+        before = _payload(record.before_json)
+        after = _payload(record.after_json)
         text = []
         if record.detail:
             text.append(record.detail)
@@ -411,20 +400,14 @@ class AuditPanel(QWidget):
         if after is not None:
             text.append("After:")
             text.append(json.dumps(after, indent=2, default=str))
-        if auditor:
-            text.append("")
-            text.append(
-                "Coordinate lists are withheld in this view. An auditor reads the "
-                "history without reading clinical content."
-            )
         self.detail_text.setPlainText("\n".join(text))
 
 
-def _payload(raw: str, redact: bool):
+def _payload(raw: str):
     if not raw:
         return None
     try:
         value = json.loads(raw)
     except (ValueError, TypeError):
         return raw
-    return redact_for_auditor(value) if redact else value
+    return value

@@ -88,7 +88,7 @@ class AuditEvent(str, Enum):
         return self.value.replace("_", " ").capitalize()
 
 
-#: Events an auditor may read but that never carry clinical content.
+#: Events that change how a study is run rather than what is in it.
 ADMINISTRATIVE_EVENTS = {
     AuditEvent.USER_CREATED, AuditEvent.USER_UPDATED, AuditEvent.USER_DEACTIVATED,
     AuditEvent.ROLE_CHANGED, AuditEvent.PROJECT_CREATED, AuditEvent.PROJECT_UPDATED,
@@ -192,26 +192,3 @@ def verify_chain(records) -> dict:
         "head_hash": previous,
         "reason": "Every record matches its recomputed digest and the chain is continuous.",
     }
-
-
-def redact_for_auditor(payload: dict) -> dict:
-    """Strip clinical geometry from an audit payload.
-
-    An auditor reads immutable histories without editing clinical content. They
-    still need to see that an object changed and who changed it, so the shape of
-    the change is preserved while coordinate lists are replaced by counts.
-    """
-    if not isinstance(payload, dict):
-        return payload
-    out: dict = {}
-    for key, value in payload.items():
-        if key in ("coordinates", "mask_rle"):
-            if isinstance(value, list):
-                out[key] = f"<{len(value) // 2} points withheld>"
-            else:
-                out[key] = "<mask withheld>"
-        elif isinstance(value, dict):
-            out[key] = redact_for_auditor(value)
-        else:
-            out[key] = value
-    return out

@@ -38,22 +38,41 @@ def utc_now() -> str:
 
 
 class Role(str):
-    """Role identifiers. Held as plain strings so they serialise transparently."""
+    """Role identifiers. Held as plain strings so they serialise transparently.
+
+    Two roles, because in practice nearly everybody annotates. An annotator
+    does the work: imports images, marks them up, measures, reviews and
+    exports. An administrator does all of that and runs the study as well,
+    which means accounts, projects, the label schema and the tolerances.
+
+    That is the whole difference. Splitting the work further put a wall in the
+    middle of one person's job, and the audit trail, not the role list, is what
+    records who did what.
+    """
 
     ANNOTATOR = "annotator"
-    REVIEWER = "clinical_reviewer"
+    #: Stored as its original value so that accounts created by earlier
+    #: versions keep working without being rewritten.
     ADMIN = "project_administrator"
-    DATA_MANAGER = "data_manager"
-    AUDITOR = "auditor"
 
-    ALL = (ANNOTATOR, REVIEWER, ADMIN, DATA_MANAGER, AUDITOR)
+    #: Listed in the order the account dialog offers them, least privileged
+    #: first, because the first entry is the one a new account gets.
+    ALL = (ANNOTATOR, ADMIN)
 
     DISPLAY = {
         ANNOTATOR: "Annotator",
-        REVIEWER: "Clinical reviewer",
-        ADMIN: "Project administrator",
-        DATA_MANAGER: "Data manager",
-        AUDITOR: "Auditor",
+        ADMIN: "Administrator",
+    }
+
+    #: Roles used by earlier versions, and the role each one becomes. A
+    #: reviewer, a data manager and an auditor all annotated or read; a lead
+    #: investigator was an administrator who annotated, which is now simply an
+    #: administrator.
+    RETIRED = {
+        "clinical_reviewer": ANNOTATOR,
+        "data_manager": ANNOTATOR,
+        "auditor": ANNOTATOR,
+        "lead_investigator": ADMIN,
     }
 
 

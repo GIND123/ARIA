@@ -140,7 +140,7 @@ def main() -> int:
         "smoke_ann", "Smoke Annotator", Role.ANNOTATOR, "SmokeTest-2026", must_change=False
     )
     reviewer = service.create_account(
-        "smoke_rev", "Smoke Reviewer", Role.REVIEWER, "SmokeTest-2026", must_change=False
+        "smoke_rev", "Smoke Reviewer", Role.ANNOTATOR, "SmokeTest-2026", must_change=False
     )
     annotator.calibration_passed = True
     repo.update_user(annotator, "Calibration set approved for the smoke run.")

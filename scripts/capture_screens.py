@@ -54,7 +54,7 @@ def build(window_size=(1680, 1000)):
         "docs_admin", "R Mehta", Role.ADMIN, "DocsCapture-2026", must_change=False
     )
     reviewer = service.create_account(
-        "docs_rev", "K Alvarez", Role.REVIEWER, "DocsCapture-2026", must_change=False
+        "docs_ann", "K Alvarez", Role.ANNOTATOR, "DocsCapture-2026", must_change=False
     )
     repo.set_actor(admin)
 

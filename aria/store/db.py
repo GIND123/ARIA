@@ -560,14 +560,25 @@ class Database:
 #: Migration steps keyed by the version they produce. Each step only adds
 #: structure, so annotations written by an earlier version stay readable.
 MIGRATIONS: dict = {
-    # Version 1 is the initial schema created by SCHEMA above. Later versions
-    # are added here as the product evolves, for example:
-    # 2: {
-    #     "description": "Add a per case acquisition note column",
-    #     "statements": [
-    #         "ALTER TABLE cases ADD COLUMN acquisition_note TEXT NOT NULL DEFAULT ''",
-    #     ],
-    # },
+    # Version 1 is the initial schema created by SCHEMA above.
+    2: {
+        "description": (
+            "Move accounts onto the two role model. A clinical reviewer, a "
+            "data manager and an auditor become annotators, and a lead "
+            "investigator becomes an administrator."
+        ),
+        "statements": [
+            "UPDATE users SET role = 'annotator'"
+            " WHERE role IN ('clinical_reviewer', 'data_manager', 'auditor')",
+            "UPDATE users SET role = 'project_administrator'"
+            " WHERE role = 'lead_investigator'",
+            # Anything unrecognised is left able to work rather than locked
+            # out of its own study. Nothing should reach this, and an account
+            # that does would otherwise hold no permissions at all.
+            "UPDATE users SET role = 'annotator'"
+            " WHERE role NOT IN ('annotator', 'project_administrator')",
+        ],
+    },
 }
 
 
