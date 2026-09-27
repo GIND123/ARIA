@@ -47,6 +47,10 @@ recommend treatment.
   Segmentation**.
 * Produces a **training bundle**: one verifiable archive holding raw images,
   labels, derived measurements and a metadata sheet.
+* Adjusts **brightness, contrast, magnification and sharpness** for reading,
+  without touching the pixels any measurement is taken from.
+* Runs from **one account**: an annotator imports, marks up, measures, reviews
+  and exports. Two roles in total, the second adding only the study settings.
 
 Everything runs on the workstation. There is no network layer and no model.
 
@@ -301,9 +305,12 @@ built, it is editable, and the object records that it began as a construction.
 update and delete on the audit and revision tables, and each audit record
 carries the digest of the one before it.
 
-**Roles are least privilege.** A project administrator manages projects,
-schemas, accounts and policy; annotation is the annotator's and the reviewer's
-work. An auditor reads history and never sees editable clinical content.
+**Two roles, and the line between them is one thing.** An annotator does the
+whole of a case: import, annotate, measure, review, export. An administrator
+does that and runs the study as well, meaning accounts, projects, the label
+schema, the tolerances, the privacy policy and calibration approval. Splitting
+the work further put a wall through the middle of one person's job, and it is
+the audit trail, not the role list, that records who did what.
 
 ---
 

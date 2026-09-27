@@ -30,7 +30,7 @@ rather than something software can assert about itself, and that is stated.
 | --- | --- | --- | --- |
 | FR 011 | Lossless zoom, pan, fit, reset, window and level, contrast, brightness, inversion, original pixel toggle | `ui/viewer/canvas.py`, `io/image.py` | `ui_smoke.py::exercise display controls` |
 | FR 012 | Enhancement filters non destructive, settings stored apart from pixels | `io/image.py::apply_filter`, `cases.display_settings_json` | `test_ac003_display_changes_do_not_alter_coordinates` |
-| FR 013 | Geometry in original pixel coordinates with side, class, creator, timestamps, revision | `core/models.py::Annotation`, `store/db.py` | `test_ac003_scene_coordinates_are_image_pixels` |
+| FR 013 | Geometry in original pixel coordinates with side, class, creator, timestamps, revision | `core/models.py::Annotation`, `store/db.py` | `test_ac003_scene_coordinates_are_image_pixels`, `TestTheControlsNeverTouchTheData` |
 | FR 014 | Point, distance, polyline, polygon, box, brush, eraser, contour edit, copy, undo, redo, hide, lock, delete | `ui/viewer/canvas.py`, `ui/panels/annotate_panel.py` | `ui_smoke.py::select every drawing tool`, `TestEditJournal` |
 | FR 015 | Autosave, recover interrupted sessions, prevent silent overwrite | `ui/controller.py`, `store/repository.py`, `store/db.py` | `TestConcurrency` (four tests) |
 | FR 016 | Eight quality flags with comments | `core/schema.py::QualityFlag` | `TestQualityFlags` |
@@ -97,6 +97,8 @@ rather than something software can assert about itself, and that is stated.
 | ID | Requirement | Implementation | Verification |
 | --- | --- | --- | --- |
 | NFR 001 | Authenticated accounts, least privilege roles | `security/auth.py` | `TestPermissions`, `TestAuthentication` |
+| NFR 001a | One account covers a case from import to export; administration stays separate | `security/auth.py::ROLE_PERMISSIONS`, `STUDY_ADMINISTRATION` | `test_an_annotator_does_the_whole_job_on_a_case`, `test_running_the_study_is_the_only_difference`, `TestOneAccountCoversTheWholeJob` |
+| FR 053a | Accounts created before the two role model keep working after the upgrade | `store/db.py::MIGRATIONS[2]`, `core/models.py::Role.RETIRED` | `tests/test_role_migration.py` |
 | NFR 002 | Encrypted in transit and at rest | `security/crypto.py`. There is no transit: ARIA has no network layer, which is a stronger statement than encrypting one. At rest uses AES-256-GCM with a key held in the configuration directory, optionally wrapped by a passphrase. | `selftest::check_paths`, compatibility check reports both application and volume encryption |
 | NFR 003 | Audit login, import, view, assignment, change, submission, review, adjudication, export and administration | `core/audit.py::AuditEvent`, `store/repository.py::log` | `TestAudit::test_every_event_type_reaches_the_log` |
 | NFR 004 | Append only, with actor, event, object, timestamp and before and after values | `store/db.py` triggers, `core/audit.py` hash chain | `TestAudit` (four tests) |

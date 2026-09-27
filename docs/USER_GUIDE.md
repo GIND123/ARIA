@@ -1,6 +1,6 @@
 # ARIA user guide
 
-Written for: annotators, reviewers and administrators using ARIA.
+Written for: anybody annotating or running a study in ARIA.
 
 ARIA is an annotation and research data tool for dental panoramic radiographs.
 It records what you measure and how you measured it. It does not diagnose
@@ -14,20 +14,21 @@ recommend treatment.
 1. [First run](#first-run)
 2. [Signing in](#signing-in)
 3. [The workspace](#the-workspace)
-4. [Importing images](#importing-images)
-5. [Calibration and units](#calibration-and-units)
-6. [Annotating a case](#annotating-a-case)
-7. [Recording what is absent](#recording-what-is-absent)
-8. [Grading the cortex](#grading-the-cortex)
-9. [Quality flags](#quality-flags)
-10. [Texture features](#texture-features)
-11. [Submitting](#submitting)
-12. [Reviewing](#reviewing)
-13. [Agreement](#agreement)
-14. [Exporting](#exporting)
-15. [Administration](#administration)
-16. [Keeping your work safe](#keeping-your-work-safe)
-17. [When something goes wrong](#when-something-goes-wrong)
+4. [Adjusting the image](#adjusting-the-image)
+5. [Importing images](#importing-images)
+6. [Calibration and units](#calibration-and-units)
+7. [Annotating a case](#annotating-a-case)
+8. [Recording what is absent](#recording-what-is-absent)
+9. [Grading the cortex](#grading-the-cortex)
+10. [Quality flags](#quality-flags)
+11. [Texture features](#texture-features)
+12. [Submitting](#submitting)
+13. [Reviewing](#reviewing)
+14. [Agreement](#agreement)
+15. [Exporting](#exporting)
+16. [Administration](#administration)
+17. [Keeping your work safe](#keeping-your-work-safe)
+18. [When something goes wrong](#when-something-goes-wrong)
 
 ---
 
@@ -41,17 +42,16 @@ the requirements. Every row says what was measured, what the requirement is and,
 where it is not met, what to do about it. You can continue past a failed
 requirement deliberately, and that choice is recorded.
 
-**It creates an administrator account.** Everything you do in ARIA is recorded
-against an account, which is what makes the history meaningful. The password is
-stored as a memory hard digest, never as text, so there is no way to recover it.
-Create a second administrator account afterwards.
+**It creates your account.** Everything you do in ARIA is recorded against an
+account, which is what makes the history meaningful. The password is stored as a
+memory hard digest, never as text, so there is no way to recover it. Create a
+second administrator account afterwards, so that a forgotten password does not
+lock you out of your own study.
 
-An administrator imports images, manages the project and reads annotations, but
-does not draw them: annotation is the annotator's and the reviewer's work. If
-you are running the study on your own, tick **I will also be annotating in this
-study** on that page. It creates an annotator account alongside the
-administrator one, and you sign in as that account to draw. You can add the same
-account later from Administration, Accounts.
+This account is an administrator, which means it can do everything: import
+images, annotate and measure them, export the results, and add further
+accounts. There is nothing to choose here. Colleagues you add later are
+annotators by default, which is the same minus the study settings.
 
 **It creates a project.** A project holds its own cases, label schema,
 tolerances and privacy profile.
@@ -68,6 +68,33 @@ administrator has configured, the account locks for a set period.
 
 If you were given a temporary password you will be asked to change it before you
 can continue.
+
+### What each role can do
+
+There are two.
+
+| Role | Does the work on a case | Runs the study |
+| --- | --- | --- |
+| Annotator | yes | no |
+| Administrator | yes | yes |
+
+**Doing the work** means the whole of it: importing images, annotating and
+measuring them, reviewing them, and exporting the results and the training
+bundle. Most people only ever need this.
+
+**Running the study** is the six things an annotator cannot do: add or change
+accounts, create projects, change the label schema, change the tolerances,
+change the privacy policy, and approve a calibration set.
+
+Setup creates an administrator, so the person who installs ARIA can do
+everything from the start. Add colleagues from Administration, Accounts, where
+annotator is the default.
+
+An account that cannot do something is told so plainly. Menu entries it cannot
+use are greyed and modules it cannot open are not offered. A case only ever
+opens read only for a reason that has nothing to do with roles: somebody else
+is working on it, you chose to open it read only, or the account has been
+deactivated. The status bar says which.
 
 ---
 
@@ -122,6 +149,38 @@ Help, Keyboard shortcuts lists everything.
 
 ---
 
+## Adjusting the image
+
+The **Image display** panel on the right changes how the image is drawn. It has
+four controls and a reset.
+
+![The image display panel](images/panel_image_display.png)
+
+| Control | What it does |
+| --- | --- |
+| Brightness | Lifts or lowers the whole image |
+| Contrast | Spreads the grey levels apart or brings them together |
+| Magnification | Draws the image larger or smaller, from 2 to 800 per cent |
+| Sharpness | Enhances edges, which helps when the endosteal margin is faint |
+
+**Reset to original** puts all four back to the state the image arrived in. For
+a DICOM study that means the window the device recorded, not a neutral grey.
+
+None of this changes the image. Measurements are always taken from the pixels as
+they arrived, so you can turn the sharpness up to find a border and place the
+point with it still on. What you see and what is measured are deliberately two
+different things, and View, Show original pixels shows you the difference at any
+time.
+
+The settings are remembered per case, so a case you return to looks the way you
+left it. Right dragging on the image still sets the window and level directly,
+and the magnification follows whatever the zoom is doing, however you changed it.
+
+If the panel is not there, View, Image display brings it back, and View, Reset
+panel layout puts both side panels back where they started.
+
+---
+
 ## Importing images
 
 File, Import images, or File, Import folder.
@@ -161,8 +220,8 @@ This is the part that most affects whether your millimetre values mean anything.
 **A DICOM header gives detector spacing, not anatomical scale.** A panoramic
 unit magnifies the patient, and it magnifies differently in the vertical and the
 horizontal direction. ARIA therefore reads the header spacing, shows it, and
-marks it *present, not validated*. Millimetre values stay unavailable until a
-reviewer validates it.
+marks it *present, not validated*. Millimetre values stay unavailable until
+somebody validates it.
 
 To validate: open Measure, read the values shown, and choose Validate. ARIA
 refuses values outside the plausible range for a panoramic detector rather than
@@ -338,7 +397,9 @@ revision; the earlier one is never altered.
 
 ## Reviewing
 
-Reviewers work in the Review module.
+Reviewing happens in the Review module. Any account can review, so on a study
+with more than one person, agree who checks whose work. ARIA records who
+reviewed what either way.
 
 **Submission** shows the set as it stands, with the annotator, the revision and
 the counts.
