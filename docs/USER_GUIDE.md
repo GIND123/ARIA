@@ -227,6 +227,35 @@ To validate: open Measure, read the values shown, and choose Validate. ARIA
 refuses values outside the plausible range for a panoramic detector rather than
 accepting an obviously wrong scale.
 
+### Making a millimetre mean something
+
+Measure, Calibrate opens a window with two halves, and the second half is the
+one that matters.
+
+**Set the scale.** Draw along an object whose true size you know, placed in the
+image at the region you intend to measure, and give its size. A steel ball of
+known diameter is the usual choice. You can draw one reference and use it for
+both axes, or a vertical and a horizontal reference so each axis gets its own
+scale. The second is what a panoramic image actually needs, because the unit
+magnifies more in one direction than the other.
+
+**Check the scale.** Draw along a *second* object of known size, one the scale
+was not taken from, and ARIA reports how far out the answer comes, in
+millimetres and per cent. A result further than two per cent from the truth is
+reported as a failure.
+
+This second step is the only thing that answers the question everyone
+eventually asks, which is whether a centimetre on screen is a centimetre of
+jaw. Without it you have a number, not a measurement. ARIA lets you apply a
+calibration that fails its check, because finding out how far out a particular
+machine is can be the point, but it records the result with the case and writes
+it into every export, so a reader can see it.
+
+The error columns appear in `cases.csv` as `calibration_verified`,
+`verification_error_mm` and `verification_error_percent`. When you come to
+train a model on this data, those columns tell you which cases carry
+millimetre values you can trust.
+
 **To calibrate manually**, choose Manual calibration, click the two ends of
 something whose true length you know, and enter that length.
 

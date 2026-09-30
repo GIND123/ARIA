@@ -100,6 +100,10 @@ class MainWindow(QMainWindow):
         self._module_history: list = []
         self._history_index = -1
         self._suppress_history = False
+        #: Held while the calibration dialog is open, because a ruler line
+        #: drawn during that time belongs to the dialog rather than to the
+        #: status bar.
+        self._calibration_dialog = None
 
         self.setWindowTitle(f"{APP_NAME}   {APP_LONG_NAME}")
         self.setWindowIcon(application_icon())
@@ -1162,63 +1166,98 @@ class MainWindow(QMainWindow):
     # -- calibration ---------------------------------------------------------
 
     def start_manual_calibration(self) -> None:
+        """Open the calibration dialog, which sets a scale and then checks it."""
         if self.controller.case_data is None:
             return
+        from .dialogs.calibration_dialog import CalibrationDialog
+
+        # Shown rather than exec'd. The dialog steps out of the way so the
+        # object can be drawn on the image underneath it, and an exec'd dialog
+        # is application modal, so the canvas would never see the drag.
+        dialog = CalibrationDialog(self.controller, self)
+        dialog.measure_requested.connect(
+            lambda _slot: self._begin_calibration_line(dialog)
+        )
+        dialog.accepted.connect(lambda: self._on_calibration_accepted(dialog))
+        dialog.finished.connect(lambda _result: self._end_calibration())
+        self._calibration_dialog = dialog
+        dialog.show()
+
+    def _on_calibration_accepted(self, dialog) -> None:
+        if dialog.calibration is not None:
+            self._accept_calibration(dialog.calibration)
+
+    def _end_calibration(self) -> None:
+        self._calibration_dialog = None
+        self.set_tool(Tool.SELECT)
+
+    def _begin_calibration_line(self, dialog) -> None:
+        """Put the ruler in the person's hand for the dialog's next line."""
         self.set_tool(Tool.RULER)
         self.statusBar().showMessage(
-            "Click the two ends of a structure whose true length you know.", 12000
+            "Click the two ends of the object. The calibration window comes "
+            "back when you have.",
+            20000,
         )
+
+    def _accept_calibration(self, calibration) -> None:
+        detail = (
+            f"Manual calibration, {calibration.reference_description}. "
+            f"{calibration.verification_line()}"
+        )
+        self.controller.set_calibration(calibration, detail)
+        self.set_tool(Tool.SELECT)
+        if not calibration.has_verification:
+            self.statusBar().showMessage(
+                "The scale is set but unchecked. Its accuracy is unmeasured "
+                "until a second object of known size is measured against it.",
+                12000,
+            )
+        elif not calibration.is_verified:
+            self.statusBar().showMessage(calibration.verification_line(), 15000)
+        else:
+            self.statusBar().showMessage(
+                f"Calibrated and checked. {calibration.verification_line()}",
+                10000,
+            )
+        self.set_module("measure")
 
     def _on_ruler(self, length_px: float, start, end) -> None:
-        from PySide6.QtWidgets import QInputDialog
+        """A ruler line has been drawn.
 
-        if length_px < 2:
-            self.statusBar().showMessage("That measurement is too short to calibrate from.", 5000)
-            return
-        value, ok = QInputDialog.getDouble(
-            self, "Manual calibration",
-            f"The line you drew is {length_px:.2f} pixels long.\n\n"
-            f"What is its true length in millimetres?",
-            25.0, 0.1, 500.0, 3,
-        )
-        if not ok:
-            return
-        description, _ = QInputDialog.getText(
-            self, "Manual calibration",
-            "Describe the reference, for example the object and where it sits:",
-        )
-
-        from ..core.models import utc_now
-        from ..core.units import Calibration
-
-        user = self.controller.user
-        try:
-            calibration = Calibration.from_known_length(
-                value, length_px, description.strip() or "Manual reference",
-                user.pseudonym if user else "unknown", utc_now(),
-            )
-        except ValueError as exc:
-            QMessageBox.warning(self, "Calibration not accepted", str(exc))
-            return
-
-        if calibration.warnings:
-            answer = QMessageBox.question(
-                self, "Check this calibration",
-                "The calibration was computed but raised these points:\n\n"
-                + "\n".join(f"  {w}" for w in calibration.warnings)
-                + "\n\nUse it anyway?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
+        While the calibration dialog is open the line belongs to whichever slot
+        asked for it. Otherwise it is an ordinary measurement and the status bar
+        reports it.
+        """
+        dialog = getattr(self, "_calibration_dialog", None)
+        if dialog is not None:
+            if length_px < 2:
+                self.statusBar().showMessage(
+                    "That line is too short to calibrate from. Draw it again.",
+                    6000,
+                )
+                dialog.cancel_measurement()
                 return
+            dialog.accept_measurement(end[0] - start[0], end[1] - start[1])
+            return
 
-        self.controller.set_calibration(
-            calibration,
-            f"Manual calibration from a {value} mm reference measured over "
-            f"{length_px:.2f} pixels.",
+        calibration = (
+            self.controller.case_data.case.calibration
+            if self.controller.case_data is not None else None
         )
-        self.set_tool(Tool.SELECT)
-        self.set_module("measure")
+        if calibration is not None and calibration.millimetres_available:
+            millimetres = calibration.distance_mm(end[0] - start[0], end[1] - start[1])
+            self.statusBar().showMessage(
+                f"{length_px:.1f} px, {millimetres:.2f} mm. "
+                f"{'Checked calibration.' if calibration.is_verified else 'Unchecked calibration, accuracy unmeasured.'}",
+                8000,
+            )
+        else:
+            self.statusBar().showMessage(
+                f"{length_px:.1f} px. Millimetres need a calibration: "
+                f"Measure, Calibrate.",
+                8000,
+            )
 
     # -- texture -------------------------------------------------------------
 

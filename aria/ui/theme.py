@@ -382,8 +382,17 @@ QCheckBox::indicator:checked {{
     border-color: {p.accent};
 }}
 QRadioButton::indicator:checked {{
-    background: {p.accent};
-    border: {s(4)}px solid {p.raised_pressed};
+    /* The border geometry is kept identical to the unchecked state, because
+       thickening it changes the box the radius is measured against and the
+       circle squares off into something that reads as a checkbox. The dot is
+       painted instead, as a radial fill inside the same ring. */
+    border: 1px solid {p.accent};
+    border-radius: {s(7)}px;
+    background: qradialgradient(
+        cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+        stop: 0 {p.accent}, stop: 0.5 {p.accent},
+        stop: 0.56 {p.raised_pressed}, stop: 1 {p.raised_pressed}
+    );
 }}
 QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
     border-color: {p.text_disabled};

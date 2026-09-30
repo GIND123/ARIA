@@ -93,6 +93,13 @@ PLAUSIBLE_SPACING_MM = (0.005, 1.0)
 #: errors rather than applied.
 PLAUSIBLE_MAGNIFICATION = (1.0, 1.6)
 
+#: How far a verification measurement may fall from the true size of the object
+#: before the calibration is reported as failing its own check. Two per cent of
+#: a 10 mm reference is 0.2 mm, which is the order of the cortical margin these
+#: measurements are about, so a wider tolerance would pass a calibration that
+#: cannot support the conclusion being drawn from it.
+VERIFICATION_TOLERANCE_PERCENT = 2.0
+
 
 @dataclass
 class Calibration:
@@ -116,6 +123,22 @@ class Calibration:
     reference_description: str = ""
     reference_length_mm: float | None = None
     reference_length_px: float | None = None
+    #: Where the reference was drawn, in image pixels. Panoramic magnification
+    #: changes across the arch, so a scale established at the premolar does not
+    #: speak for the gonion, and a measurement far from here is worth a word.
+    reference_centre_px: list = field(default_factory=list)
+
+    #: A second object of known size, measured after the scale was set. This is
+    #: what separates a calibration that has been demonstrated from one that has
+    #: merely been asserted: without it, nothing has ever checked that a
+    #: millimetre in this image is a millimetre of jaw.
+    verification_length_mm: float | None = None
+    verification_dx_px: float | None = None
+    verification_dy_px: float | None = None
+    verification_description: str = ""
+    verified_by: str | None = None
+    verified_at: str | None = None
+
     device_model: str = ""
     notes: str = ""
     warnings: list = field(default_factory=list)
@@ -240,6 +263,115 @@ class Calibration:
             )
         return issues
 
+    # -- verification --------------------------------------------------------
+
+    @property
+    def has_verification(self) -> bool:
+        return (
+            self.verification_length_mm is not None
+            and self.verification_dx_px is not None
+            and self.verification_dy_px is not None
+        )
+
+    @property
+    def verification_measured_mm(self) -> float | None:
+        """What this calibration says the check object measures."""
+        if not self.has_verification or not self.has_spacing:
+            return None
+        return self.distance_mm(self.verification_dx_px, self.verification_dy_px)
+
+    @property
+    def verification_error_mm(self) -> float | None:
+        measured = self.verification_measured_mm
+        if measured is None:
+            return None
+        return measured - self.verification_length_mm
+
+    @property
+    def verification_error_percent(self) -> float | None:
+        error = self.verification_error_mm
+        if error is None or not self.verification_length_mm:
+            return None
+        return 100.0 * error / self.verification_length_mm
+
+    @property
+    def is_verified(self) -> bool:
+        """True when a check object was measured and came out close enough."""
+        error = self.verification_error_percent
+        if error is None:
+            return False
+        return abs(error) <= VERIFICATION_TOLERANCE_PERCENT
+
+    def verify(
+        self, known_mm: float, dx_px: float, dy_px: float,
+        description: str, by_user: str, at: str,
+    ) -> dict:
+        """Measure a second object of known size and record how far out it is.
+
+        This is the only step that can answer whether a millimetre reported by
+        this application is a millimetre of patient. Everything before it
+        establishes a scale; this checks that the scale is right, using an
+        object the scale was not derived from.
+        """
+        if known_mm <= 0:
+            raise ValueError("The true size of the check object must be positive.")
+        if not self.has_spacing:
+            raise ValueError(
+                "There is no calibration to check. Set the scale first."
+            )
+        if abs(dx_px) < 1e-9 and abs(dy_px) < 1e-9:
+            raise ValueError("The check measurement has no length.")
+
+        self.verification_length_mm = float(known_mm)
+        self.verification_dx_px = float(dx_px)
+        self.verification_dy_px = float(dy_px)
+        self.verification_description = description
+        self.verified_by = by_user
+        self.verified_at = at
+        return self.verification_result()
+
+    def verification_result(self) -> dict:
+        """The outcome of the check, in the terms a reader needs."""
+        return {
+            "known_mm": self.verification_length_mm,
+            "measured_mm": self.verification_measured_mm,
+            "error_mm": self.verification_error_mm,
+            "error_percent": self.verification_error_percent,
+            "tolerance_percent": VERIFICATION_TOLERANCE_PERCENT,
+            "passed": self.is_verified,
+            "description": self.verification_description,
+            "verified_by": self.verified_by,
+            "verified_at": self.verified_at,
+        }
+
+    def verification_line(self) -> str:
+        """One sentence a person can act on."""
+        if not self.has_verification:
+            return (
+                "This calibration has not been checked against a second object "
+                "of known size, so its accuracy is unmeasured."
+            )
+        measured = self.verification_measured_mm
+        error = self.verification_error_mm
+        percent = self.verification_error_percent
+        verdict = "within" if self.is_verified else "outside"
+        return (
+            f"A {self.verification_length_mm:.4g} mm object measures "
+            f"{measured:.4g} mm, which is {error:+.3g} mm ({percent:+.2f} per "
+            f"cent) and {verdict} the {VERIFICATION_TOLERANCE_PERCENT:.3g} per "
+            f"cent tolerance."
+        )
+
+    def distance_from_reference_px(self, x_px: float) -> float | None:
+        """How far a measurement sits from where the scale was established.
+
+        Horizontal magnification is the part that moves across a panoramic
+        image, so the horizontal separation is the one worth reporting.
+        """
+        if not self.reference_centre_px:
+            return None
+        return abs(float(x_px) - float(self.reference_centre_px[0]))
+
     def can_validate(self) -> tuple:
         """Return ``(ok, reasons)`` describing whether validation may proceed."""
         reasons: list = []
@@ -290,10 +422,18 @@ class Calibration:
             f"{self.row_spacing_mm:.6g} mm/px vertical, "
             f"{self.col_spacing_mm:.6g} mm/px horizontal"
         )
+        if self.has_verification:
+            error = self.verification_error_percent
+            check = (
+                f"Checked against a {self.verification_length_mm:.4g} mm object, "
+                f"{error:+.2f} per cent out."
+            )
+        else:
+            check = "Not checked against an object of known size."
         return (
             f"Calibration: {self.source.display}. Value {scale}. "
             f"Status {self.status.display}. "
-            f"Correction factor {self.correction_factor_text}."
+            f"Correction factor {self.correction_factor_text}. {check}"
         )
 
     def unit_note(self) -> str:
@@ -311,6 +451,11 @@ class Calibration:
         d["effective_col_mm"] = self.effective_col_mm
         d["millimetres_available"] = self.millimetres_available
         d["correction_factor"] = self.correction_factor_text
+        d["verified"] = self.is_verified
+        d["verification_measured_mm"] = self.verification_measured_mm
+        d["verification_error_mm"] = self.verification_error_mm
+        d["verification_error_percent"] = self.verification_error_percent
+        d["verification_tolerance_percent"] = VERIFICATION_TOLERANCE_PERCENT
         return d
 
     @classmethod
@@ -323,6 +468,11 @@ class Calibration:
             "effective_col_mm",
             "millimetres_available",
             "correction_factor",
+            "verified",
+            "verification_measured_mm",
+            "verification_error_mm",
+            "verification_error_percent",
+            "verification_tolerance_percent",
         ):
             data.pop(derived, None)
         source = data.pop("source", CalibrationSource.NONE.value)
@@ -332,6 +482,58 @@ class Calibration:
         obj.source = CalibrationSource(source)
         obj.status = ValidationStatus(status)
         return obj
+
+    @classmethod
+    def from_known_lengths(
+        cls,
+        vertical_mm: float,
+        vertical_px: float,
+        horizontal_mm: float,
+        horizontal_px: float,
+        description: str,
+        by_user: str,
+        at: str,
+        centre_px: tuple | None = None,
+    ) -> "Calibration":
+        """Build a calibration from a reference drawn on each axis.
+
+        A panoramic unit magnifies vertically and horizontally by different
+        amounts, so one drawn line cannot describe both. Where two references
+        are available, each axis gets its own scale and a height and a width
+        measured on the same image are converted with the factor that belongs
+        to them.
+        """
+        for label, value in (
+            ("vertical", vertical_mm), ("horizontal", horizontal_mm),
+        ):
+            if value <= 0:
+                raise ValueError(
+                    f"The {label} reference length in millimetres must be positive."
+                )
+        for label, value in (
+            ("vertical", vertical_px), ("horizontal", horizontal_px),
+        ):
+            if value <= 0:
+                raise ValueError(
+                    f"The {label} reference length in pixels must be positive."
+                )
+
+        cal = cls(
+            source=CalibrationSource.MANUAL_KNOWN_LENGTH,
+            row_spacing_mm=vertical_mm / vertical_px,
+            col_spacing_mm=horizontal_mm / horizontal_px,
+            status=ValidationStatus.UNVALIDATED,
+            reference_description=description,
+            reference_length_mm=vertical_mm,
+            reference_length_px=vertical_px,
+            reference_centre_px=list(centre_px) if centre_px else [],
+        )
+        ok, reasons = cal.can_validate()
+        if ok:
+            cal.validate(by_user, at)
+        else:
+            cal.warnings = reasons
+        return cal
 
     @classmethod
     def from_known_length(

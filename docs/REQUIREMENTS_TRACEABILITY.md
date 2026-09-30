@@ -97,6 +97,8 @@ rather than something software can assert about itself, and that is stated.
 | ID | Requirement | Implementation | Verification |
 | --- | --- | --- | --- |
 | NFR 001 | Authenticated accounts, least privilege roles | `security/auth.py` | `TestPermissions`, `TestAuthentication` |
+| FR 007a | A calibration can be checked against a second object of known size, with the error recorded and exported | `core/units.py::Calibration.verify`, `ui/dialogs/calibration_dialog.py` | `tests/test_calibration_verification.py` |
+| FR 007b | Each axis can carry its own scale, because panoramic magnification differs by axis | `core/units.py::Calibration.from_known_lengths` | `TestEachAxisCanHaveItsOwnScale` |
 | NFR 001a | One account covers a case from import to export; administration stays separate | `security/auth.py::ROLE_PERMISSIONS`, `STUDY_ADMINISTRATION` | `test_an_annotator_does_the_whole_job_on_a_case`, `test_running_the_study_is_the_only_difference`, `TestOneAccountCoversTheWholeJob` |
 | FR 053a | Accounts created before the two role model keep working after the upgrade | `store/db.py::MIGRATIONS[2]`, `core/models.py::Role.RETIRED` | `tests/test_role_migration.py` |
 | NFR 002 | Encrypted in transit and at rest | `security/crypto.py`. There is no transit: ARIA has no network layer, which is a stronger statement than encrypting one. At rest uses AES-256-GCM with a key held in the configuration directory, optionally wrapped by a passphrase. | `selftest::check_paths`, compatibility check reports both application and volume encryption |
