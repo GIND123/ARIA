@@ -1622,20 +1622,29 @@ class MainWindow(QMainWindow):
         The panels cannot be floated or moved any more, but a layout saved
         before that was the case is replayed without asking whether it still
         makes sense: a panel floating as a window of its own, possibly on a
-        screen that is no longer attached, or docked on the other side. The
-        module panel holds the case list and every annotation tool, so a
-        session that starts with it hidden looks exactly like the panel having
-        disappeared, and it is shown again too.
+        screen that is no longer attached, or docked on the other side.
+
+        Being hidden is treated differently for the two of them. The module
+        panel holds the case list and every annotation tool, so a session that
+        starts without it looks exactly like the panel having disappeared, and
+        it always comes back. The image display panel is a reading aid that can
+        be closed for space, and somebody who closed it meant to; reopening it
+        on every launch would be the application arguing. View, Image display
+        brings it back.
         """
         for dock, area in (
             (self.module_dock, Qt.LeftDockWidgetArea),
             (self.display_dock, Qt.RightDockWidgetArea),
         ):
             if dock.isFloating() or self.dockWidgetArea(dock) != area:
+                # Re-docking a hidden panel must not be what reveals it.
+                was_hidden = dock.isHidden()
                 dock.setFloating(False)
                 self.addDockWidget(area, dock)
-            if dock.isHidden():
-                dock.show()
+                dock.setHidden(was_hidden)
+
+        if self.module_dock.isHidden():
+            self.module_dock.show()
 
     def restore_geometry(self) -> None:
         from PySide6.QtCore import QByteArray

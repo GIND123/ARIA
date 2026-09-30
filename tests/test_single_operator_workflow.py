@@ -14,6 +14,7 @@ panels reachable, and putting every labelling gesture on disk as it happens.
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import Qt
 
 
 @pytest.fixture
@@ -195,6 +196,52 @@ class TestThePanelsStayReachable:
 
         assert not window.module_dock.isFloating()
         assert window.dockWidgetArea(window.module_dock) == Qt.LeftDockWidgetArea
+
+    def test_closing_the_display_panel_is_remembered(self, window):
+        """It can be closed for space, so closing it has to mean something.
+        Reopening it on every launch would be the application arguing."""
+        window.display_dock.close()
+        assert window.display_dock.isHidden()
+
+        window._pin_panels()
+
+        assert window.display_dock.isHidden(), (
+            "The image display panel reopened itself after being closed"
+        )
+
+    def test_a_closed_display_panel_survives_a_relaunch(self, window):
+        """The same thing through the path a relaunch actually takes."""
+        window.display_dock.close()
+        window.settings.remember_window_geometry = True
+        window.settings.window_state = bytes(window.saveState().toHex()).decode()
+        window.display_dock.show()
+
+        window.restore_geometry()
+
+        assert window.display_dock.isHidden()
+
+    def test_the_module_panel_always_comes_back(self, window):
+        """The other half of that rule. This one holds the case list and every
+        annotation tool, so it is never left hidden."""
+        window.module_dock.hide()
+        window.display_dock.close()
+
+        window._pin_panels()
+
+        assert not window.module_dock.isHidden()
+        assert window.display_dock.isHidden()
+
+    def test_a_hidden_panel_is_not_revealed_by_being_re_docked(self, window):
+        """Re-docking is about where a panel sits, not whether it is shown."""
+        window.display_dock.close()
+        window.addDockWidget(Qt.LeftDockWidgetArea, window.display_dock)
+
+        window._pin_panels()
+
+        assert window.dockWidgetArea(window.display_dock) == Qt.RightDockWidgetArea
+        assert window.display_dock.isHidden(), (
+            "Moving the panel back to its side also reopened it"
+        )
 
     def test_a_panel_docked_on_the_other_side_goes_home(self, window):
         from PySide6.QtCore import Qt
