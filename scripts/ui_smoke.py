@@ -356,7 +356,7 @@ def main() -> int:
     @step("recover panels that were left unreachable")
     def panel_recovery():
         window.module_dock.hide()
-        window._recover_unreachable_panels()
+        window._pin_panels()
         assert not window.module_dock.isHidden(), "The module panel stayed hidden"
 
         window.display_dock.hide()

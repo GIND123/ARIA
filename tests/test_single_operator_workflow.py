@@ -128,7 +128,7 @@ class TestThePanelsStayReachable:
         window.module_dock.hide()
         assert window.module_dock.isHidden()
 
-        window._recover_unreachable_panels()
+        window._pin_panels()
 
         assert not window.module_dock.isHidden(), (
             "A session that starts with the module panel hidden has no case "
@@ -141,7 +141,7 @@ class TestThePanelsStayReachable:
         window.module_dock.setFloating(True)
         window.module_dock.setGeometry(QRect(-9000, -9000, 300, 400))
 
-        window._recover_unreachable_panels()
+        window._pin_panels()
 
         assert not window.module_dock.isFloating(), (
             "The panel is still floating somewhere no screen reaches"
@@ -159,15 +159,50 @@ class TestThePanelsStayReachable:
             assert not dock.isHidden()
             assert not dock.isFloating()
 
-    def test_a_panel_docked_where_it_was_left_is_not_disturbed(self, window):
-        """Recovery is for arrangements that cannot be used, not for every
-        arrangement that is not the default."""
+    def test_the_panels_cannot_be_dragged_off_or_floated(self, window):
+        """The report: on Linux the module panel came loose as a window of its
+        own and could not be put back."""
+        from PySide6.QtWidgets import QDockWidget
+
+        for dock in (window.module_dock, window.display_dock):
+            assert not dock.features() & QDockWidget.DockWidgetFloatable
+            assert not dock.features() & QDockWidget.DockWidgetMovable
+
+    def test_a_panel_floating_from_an_older_layout_is_docked(self, window):
+        """A layout saved while the panels could still float is put back."""
+        from PySide6.QtCore import Qt
+
+        window.module_dock.setFloating(True)
+        window.display_dock.setFloating(True)
+
+        window._pin_panels()
+
+        assert not window.module_dock.isFloating()
+        assert not window.display_dock.isFloating()
+        assert window.dockWidgetArea(window.module_dock) == Qt.LeftDockWidgetArea
+        assert window.dockWidgetArea(window.display_dock) == Qt.RightDockWidgetArea
+
+    def test_a_saved_layout_with_a_floating_panel_restores_docked(self, window):
+        """The whole path a relaunch takes, from the saved state onwards."""
+        from PySide6.QtCore import Qt
+
+        window.module_dock.setFloating(True)
+        window.settings.remember_window_geometry = True
+        window.settings.window_state = bytes(window.saveState().toHex()).decode()
+        window.module_dock.setFloating(False)
+
+        window.restore_geometry()
+
+        assert not window.module_dock.isFloating()
+        assert window.dockWidgetArea(window.module_dock) == Qt.LeftDockWidgetArea
+
+    def test_a_panel_docked_on_the_other_side_goes_home(self, window):
         from PySide6.QtCore import Qt
 
         window.addDockWidget(Qt.RightDockWidgetArea, window.module_dock)
-        window._recover_unreachable_panels()
+        window._pin_panels()
 
-        assert window.dockWidgetArea(window.module_dock) == Qt.RightDockWidgetArea
+        assert window.dockWidgetArea(window.module_dock) == Qt.LeftDockWidgetArea
 
 
 class TestEveryGestureIsOnDiskWhenItEnds:

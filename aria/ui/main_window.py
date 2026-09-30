@@ -145,12 +145,13 @@ class MainWindow(QMainWindow):
         self.canvas = self.workspace.main_canvas
 
     def _build_module_panel(self) -> None:
+        # Pinned to the left. A panel that can be dragged off becomes a window
+        # of its own, and on Linux, Wayland in particular, it often cannot be
+        # dragged back in again.
         self.module_dock = QDockWidget("Modules", self)
         self.module_dock.setObjectName("moduleDock")
-        self.module_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.module_dock.setFeatures(
-            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
-        )
+        self.module_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
+        self.module_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
 
         container = QWidget(self.module_dock)
         layout = QVBoxLayout(container)
@@ -215,14 +216,10 @@ class MainWindow(QMainWindow):
 
         self.display_dock = QDockWidget("Image display", self)
         self.display_dock.setObjectName("displayDock")
-        self.display_dock.setAllowedAreas(
-            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
-        )
-        self.display_dock.setFeatures(
-            QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-            | QDockWidget.DockWidgetClosable
-        )
+        # Pinned to the right, like the module panel to the left. It can be
+        # closed and brought back from the View menu, but not dragged away.
+        self.display_dock.setAllowedAreas(Qt.RightDockWidgetArea)
+        self.display_dock.setFeatures(QDockWidget.DockWidgetClosable)
         self.display_panel = DisplayPanel(self.controller, self)
         self.display_dock.setWidget(self.display_panel)
         self.display_dock.setMinimumWidth(METRICS.panel_min_width)
@@ -1600,10 +1597,9 @@ class MainWindow(QMainWindow):
     def reset_panel_layout(self) -> None:
         """Put the side panels back, docked, visible and the right size.
 
-        The way out of every arrangement that leaves a panel unreachable: a
-        panel floated off the edge of a screen that is no longer attached, one
-        hidden from a context menu, or one restored from a session on a
-        differently shaped display.
+        The way out of every arrangement that leaves a panel unreachable or
+        squeezed: one hidden from a context menu, or one sized for a session
+        on a differently shaped display.
         """
         for dock, area in (
             (self.module_dock, Qt.LeftDockWidgetArea),
@@ -1620,38 +1616,26 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage("The side panels are back in place.", 4000)
 
-    def _recover_unreachable_panels(self) -> None:
-        """Undo a restore that would leave a panel with no way back.
+    def _pin_panels(self) -> None:
+        """Put back any panel a restored layout left loose or out of place.
 
-        A saved layout is replayed without asking whether it still makes sense.
-        The module panel holds the case list and every annotation tool, so a
-        session that starts with it hidden, or floating on a screen that is not
-        there any more, looks exactly like the panel having disappeared. It is
-        recoverable from the View menu, but only by somebody who already knows
-        that is where to look.
+        The panels cannot be floated or moved any more, but a layout saved
+        before that was the case is replayed without asking whether it still
+        makes sense: a panel floating as a window of its own, possibly on a
+        screen that is no longer attached, or docked on the other side. The
+        module panel holds the case list and every annotation tool, so a
+        session that starts with it hidden looks exactly like the panel having
+        disappeared, and it is shown again too.
         """
-        from PySide6.QtGui import QGuiApplication
-
-        def reachable(dock) -> bool:
+        for dock, area in (
+            (self.module_dock, Qt.LeftDockWidgetArea),
+            (self.display_dock, Qt.RightDockWidgetArea),
+        ):
+            if dock.isFloating() or self.dockWidgetArea(dock) != area:
+                dock.setFloating(False)
+                self.addDockWidget(area, dock)
             if dock.isHidden():
-                return False
-            if not dock.isFloating():
-                return True
-            # A floating panel counts only if it is actually on a screen that
-            # is attached now, which one saved on a second monitor may not be.
-            centre = dock.frameGeometry().center()
-            return any(
-                screen.availableGeometry().contains(centre)
-                for screen in QGuiApplication.screens()
-            )
-
-        if not reachable(self.module_dock):
-            self.reset_panel_layout()
-
-        if not reachable(self.display_dock):
-            self.display_dock.setFloating(False)
-            self.addDockWidget(Qt.RightDockWidgetArea, self.display_dock)
-            self.display_dock.show()
+                dock.show()
 
     def restore_geometry(self) -> None:
         from PySide6.QtCore import QByteArray
@@ -1664,7 +1648,7 @@ class MainWindow(QMainWindow):
             )
         if self.settings.window_state:
             self.restoreState(QByteArray.fromHex(self.settings.window_state.encode()))
-        self._recover_unreachable_panels()
+        self._pin_panels()
         if self.settings.layout in LAYOUTS:
             self.set_layout(self.settings.layout)
             self.layout_actions[self.settings.layout].setChecked(True)
