@@ -20,7 +20,7 @@ CALC_VERSION = "1.0.0"
 TEXTURE_VERSION = "1.0.0"
 
 #: Version of the on disk SQLite structure. Drives migrations.
-DB_SCHEMA_VERSION = 2
+DB_SCHEMA_VERSION = 3
 
 #: Version of the training bundle layout written by the bundle exporter.
 BUNDLE_FORMAT_VERSION = "1.0.0"

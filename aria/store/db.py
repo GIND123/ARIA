@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS cases (
     pseudonym               TEXT NOT NULL,
     source_json             TEXT NOT NULL DEFAULT '{}',
     calibration_json        TEXT NOT NULL DEFAULT '{}',
+    patient_json            TEXT NOT NULL DEFAULT '{}',
     display_settings_json   TEXT NOT NULL DEFAULT '{}',
     deid_report_json        TEXT NOT NULL DEFAULT '{}',
     state                   TEXT NOT NULL DEFAULT 'unassigned',
@@ -450,7 +451,18 @@ class Database:
                 break
             with self.transaction() as conn:
                 for statement in step["statements"]:
-                    conn.execute(statement)
+                    try:
+                        conn.execute(statement)
+                    except sqlite3.OperationalError as exc:
+                        # The schema above is created before migrations run, so
+                        # a column a later version added is already there on a
+                        # database that was made by that later version and is
+                        # only being stepped forward for its stored version
+                        # number. Adding it twice is not a failure; the column
+                        # exists either way, which is the whole point of the
+                        # step.
+                        if "duplicate column name" not in str(exc).lower():
+                            raise
             version += 1
             self.set_meta("db_schema_version", str(version))
             applied.append(step["description"])
@@ -577,6 +589,16 @@ MIGRATIONS: dict = {
             # that does would otherwise hold no permissions at all.
             "UPDATE users SET role = 'annotator'"
             " WHERE role NOT IN ('annotator', 'project_administrator')",
+        ],
+    },
+    3: {
+        "description": (
+            "Add the patient factor sheet to cases. Age, sex and the rest "
+            "confound every index read off a radiograph, and a model trained "
+            "without them learns them as though they were signal."
+        ),
+        "statements": [
+            "ALTER TABLE cases ADD COLUMN patient_json TEXT NOT NULL DEFAULT '{}'",
         ],
     },
 }

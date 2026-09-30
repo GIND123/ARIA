@@ -110,9 +110,13 @@ class TestTheUpgradeMovesEveryAccount:
 class TestTheUpgradeRunsOnceAndStays:
 
     def test_the_schema_version_moves_forward(self, old_database):
+        """Checked against the constant rather than a number written here, so
+        that adding the next migration does not break this test."""
+        from aria.version import DB_SCHEMA_VERSION
+
         db = open_database(old_database)
         try:
-            assert db.schema_version() == 2
+            assert db.schema_version() == DB_SCHEMA_VERSION
         finally:
             db.close()
 
@@ -122,9 +126,11 @@ class TestTheUpgradeRunsOnceAndStays:
         assert first == second
 
     def test_a_fresh_database_needs_no_migration(self, tmp_path):
+        from aria.version import DB_SCHEMA_VERSION
+
         db = open_database(tmp_path / "new.db")
         try:
-            assert db.schema_version() == 2
+            assert db.schema_version() == DB_SCHEMA_VERSION
         finally:
             db.close()
 

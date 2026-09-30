@@ -51,6 +51,7 @@ class AuditEvent(str, Enum):
     CALIBRATION_VALIDATED = "calibration_validated"
     CALIBRATION_REJECTED = "calibration_rejected"
     LATERALITY_CONFIRMED = "laterality_confirmed"
+    PATIENT_FACTORS_RECORDED = "patient_factors_recorded"
 
     # Workflow
     SUBMITTED = "submitted"

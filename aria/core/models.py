@@ -22,6 +22,7 @@ from .schema import (
     Side,
     get_class,
 )
+from .patient import PatientFactors
 from .units import Calibration
 
 
@@ -173,6 +174,9 @@ class Case:
     pseudonym: str = ""
     source: SourceImage = field(default_factory=SourceImage)
     calibration: Calibration = field(default_factory=Calibration)
+    #: Age, sex and the rest. Confounders, not identifiers: see core/patient.py
+    #: for what is deliberately absent.
+    patient: PatientFactors = field(default_factory=PatientFactors)
     state: str = CaseState.UNASSIGNED.value
     assigned_to: str | None = None
     #: Explicit confirmation of anatomical right and left when the source does

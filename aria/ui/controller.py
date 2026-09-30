@@ -770,6 +770,24 @@ class Controller(QObject):
         self.recompute()
         return True
 
+    def set_patient_factors(self, case_id: str, factors) -> bool:
+        """Record the confounders for a case.
+
+        Anybody who can edit annotations can fill this in: it is part of
+        describing the case, and making it an administrator's job would leave
+        the sheets blank.
+        """
+        if not self._guard_editable():
+            return False
+        self.repo.set_patient_factors(case_id, factors)
+        if self.case_data is not None and self.case_data.case.id == case_id:
+            self.case_data.case.patient = factors
+            self.case_opened.emit(self.case_data)
+        self.status_message.emit(
+            f"Patient factors saved. {factors.summary_line()}", 6000
+        )
+        return True
+
     def confirm_laterality(self, note: str = "") -> bool:
         if self.case_data is None:
             return False

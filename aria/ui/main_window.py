@@ -312,6 +312,14 @@ class MainWindow(QMainWindow):
             "Show the image with no windowing or filtering, exactly as stored.",
             checkable=True,
         )
+        self.action_patient_factors = action(
+            "Patient factors", self.edit_patient_factors, "Ctrl+Shift+P", "grade",
+            "Age, sex and the other factors an index has to be read against.",
+        )
+        self.action_calibrate = action(
+            "Calibrate", self.start_manual_calibration, "Ctrl+Shift+C", "calibrate",
+            "Set the scale from an object of known size, then check it.",
+        )
         self.action_reset_layout = action(
             "Reset panel layout", self.reset_panel_layout, tip=
             "Put the side panels back where they started, docked and visible.",
@@ -478,6 +486,10 @@ class MainWindow(QMainWindow):
         annotate_menu.addAction(self.action_construct)
         annotate_menu.addAction(self.action_mark_absent)
         annotate_menu.addAction(self.action_next_side)
+        annotate_menu.addSeparator()
+        annotate_menu.addSeparator()
+        annotate_menu.addAction(self.action_calibrate)
+        annotate_menu.addAction(self.action_patient_factors)
         annotate_menu.addSeparator()
         annotate_menu.addAction(self.action_submit)
 
@@ -864,7 +876,7 @@ class MainWindow(QMainWindow):
             a.setEnabled(has_case)
         for a in (
             self.action_delete, self.action_construct, self.action_mark_absent,
-            self.action_submit,
+            self.action_submit, self.action_calibrate, self.action_patient_factors,
         ):
             a.setEnabled(editable)
         self.tools_toolbar.setEnabled(has_case)
@@ -1190,6 +1202,19 @@ class MainWindow(QMainWindow):
     def _end_calibration(self) -> None:
         self._calibration_dialog = None
         self.set_tool(Tool.SELECT)
+
+    def edit_patient_factors(self) -> None:
+        """Open the factor sheet for the open case."""
+        if self.controller.case_data is None:
+            self.statusBar().showMessage(
+                "Open a case before recording patient factors.", 5000
+            )
+            return
+        from .dialogs.patient_dialog import PatientFactorsDialog
+
+        PatientFactorsDialog(
+            self.controller, self.controller.case_data.case, self
+        ).exec()
 
     def _begin_calibration_line(self, dialog) -> None:
         """Put the ruler in the person's hand for the dialog's next line."""

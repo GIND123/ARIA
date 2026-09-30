@@ -15,7 +15,8 @@ recommend treatment.
 2. [Signing in](#signing-in)
 3. [The workspace](#the-workspace)
 4. [Adjusting the image](#adjusting-the-image)
-5. [Importing images](#importing-images)
+5. [Patient factors](#patient-factors)
+6. [Importing images](#importing-images)
 6. [Calibration and units](#calibration-and-units)
 7. [Annotating a case](#annotating-a-case)
 8. [Recording what is absent](#recording-what-is-absent)
@@ -178,6 +179,38 @@ and the magnification follows whatever the zoom is doing, however you changed it
 
 If the panel is not there, View, Image display brings it back, and View, Reset
 panel layout puts both side panels back where they started.
+
+---
+
+## Patient factors
+
+Annotate, Patient factors records what else is true of the patient. A cortical
+width means something different at thirty and at seventy, in a man and in a
+postmenopausal woman, on and off a bisphosphonate. Recording those beside the
+case keeps them with the annotations, so an analysis can allow for them instead
+of a model learning them as though they were signal.
+
+| Field | Why it is there |
+| --- | --- |
+| Age, sex | The two that dominate every published reference |
+| Menopausal status | The largest single step change in female cortical bone |
+| Height, weight | Body mass index, computed for you |
+| Smoking | A known risk for cortical loss |
+| Known bone status | Whether osteopenia or osteoporosis is already diagnosed |
+| DXA T score and site | The reference standard your index is measured against |
+| Bone medication | Bisphosphonates and steroids change the cortex |
+
+Every field is optional. A factor sheet is usually copied from a record that is
+itself incomplete, and a form that refuses to save until every box is filled
+gets worked around rather than completed. Values that are not plausible are
+cleared with a note rather than stored.
+
+**Nothing on this form identifies a patient.** There is no name, no date of
+birth and no free date of any kind. An age of ninety or above is recorded as
+ninety, because in a study of ordinary size a single patient of a hundred and
+three has effectively been named; the export marks those rows so a reader knows
+ninety can mean older. The notes box is free text and is scanned for telephone
+numbers and email addresses before any export is written.
 
 ---
 

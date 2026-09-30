@@ -39,6 +39,7 @@ from ..core.models import (
     utc_now,
 )
 from ..core.schema import CaseState, STATE_TRANSITIONS, Side
+from ..core.patient import PatientFactors
 from ..core.units import Calibration
 from .db import Database
 
@@ -385,14 +386,16 @@ class Repository:
         with self.db.transaction() as c:
             c.execute(
                 "INSERT INTO cases (id, project_id, pseudonym, source_json,"
-                " calibration_json, display_settings_json, deid_report_json, state,"
+                " calibration_json, patient_json,"
+                " display_settings_json, deid_report_json, state,"
                 " assigned_to, laterality_confirmed, laterality_confirmed_by,"
                 " laterality_confirmed_at, laterality_note, split, imported_by,"
                 " imported_at, duplicate_target, archived, source_sha256)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     case.id, case.project_id, case.pseudonym,
                     _json(case.source.to_dict()), _json(case.calibration.to_dict()),
+                    _json(case.patient.to_dict()),
                     "{}", _json(deid_report or {}), case.state, case.assigned_to,
                     int(case.laterality_confirmed), case.laterality_confirmed_by,
                     case.laterality_confirmed_at, case.laterality_note, case.split,
@@ -557,6 +560,31 @@ class Repository:
                 project_id=case.project_id, case_id=case_id, conn=c,
             )
 
+    def set_patient_factors(
+        self, case_id: str, factors: PatientFactors, detail: str = ""
+    ) -> None:
+        """Record the confounders for one case, with an audit entry.
+
+        Written through the audit trail like any other clinical change, because
+        an age or a T score altered after the indices were computed changes
+        what those indices mean.
+        """
+        case = self.get_case(case_id)
+        if case is None:
+            raise KeyError(f"No case with identifier {case_id}")
+        before = case.patient.to_dict()
+        with self.db.transaction() as c:
+            c.execute(
+                "UPDATE cases SET patient_json = ? WHERE id = ?",
+                (_json(factors.to_dict()), case_id),
+            )
+            self.log(
+                AuditEvent.PATIENT_FACTORS_RECORDED, "case", case_id,
+                before=before, after=factors.to_dict(),
+                detail=detail or f"Patient factors: {factors.summary_line()}",
+                project_id=case.project_id, case_id=case_id, conn=c,
+            )
+
     def set_display_settings(self, case_id: str, settings: dict) -> None:
         """Display settings are saved separately from image pixels (FR 012)."""
         self.db.execute(
@@ -604,6 +632,9 @@ class Repository:
             id=row["id"], project_id=row["project_id"], pseudonym=row["pseudonym"],
             source=SourceImage.from_dict(_loads(row["source_json"], {})),
             calibration=Calibration.from_dict(_loads(row["calibration_json"], {})),
+            patient=PatientFactors.from_dict(
+                _loads(row["patient_json"], {}) if "patient_json" in row.keys() else {}
+            ),
             state=row["state"], assigned_to=row["assigned_to"],
             laterality_confirmed=bool(row["laterality_confirmed"]),
             laterality_confirmed_by=row["laterality_confirmed_by"],

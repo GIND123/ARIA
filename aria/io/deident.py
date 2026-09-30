@@ -487,11 +487,36 @@ _EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 #: check runs, otherwise every export would report false findings.
 _UID_PATTERN = re.compile(r"^\d+(\.\d+)+$")
 
-#: A telephone number written inside free text, with separators. Kept strict so
-#: that measurements and identifiers in prose do not trigger it.
-_EMBEDDED_PHONE_PATTERN = re.compile(
-    r"(?<![\d.])(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?![\d.])"
-)
+#: A run of digits inside free text, long enough and punctuated the way a
+#: contact number is. Matching a single national format is not enough: the
+#: pattern here used to require a three, three, four grouping, so a United
+#: Kingdom mobile written 07700 900123 passed straight through into an export.
+#: Length is counted rather than shape, because shape varies by country and the
+#: cost of missing one is somebody's phone number in a published dataset.
+#: The lookarounds exclude letters and underscores as well as digits, because a
+#: run of digits inside an identifier such as ann_36c039a3f19742399213 is part
+#: of a token, and nobody is reached on part of a token.
+_DIGIT_RUN_PATTERN = re.compile(r"(?<![\w.])(\+?\d[\d\s().-]{6,20}\d)(?![\w.])")
+
+#: Contact numbers are between these lengths worldwide. Below it lies every
+#: measurement and year; above it lies an accession number or a barcode, which
+#: the structural rules already cover.
+_CONTACT_DIGIT_RANGE = (9, 15)
+
+
+def _looks_like_a_contact_number(fragment: str) -> bool:
+    """True when a run of digits is the length and shape of a phone number.
+
+    A fragment carrying a decimal point is a measurement rather than a number
+    somebody is reached on, and a list of coordinates would otherwise trip this
+    the moment it grew long enough.
+    """
+    if re.search(r"\.\d", fragment):
+        return False
+    digits = re.sub(r"\D", "", fragment)
+    low, high = _CONTACT_DIGIT_RANGE
+    return low <= len(digits) <= high
+
 
 #: Keys whose values are structural identifiers rather than personal data.
 _STRUCTURAL_KEY_HINTS = (
@@ -573,16 +598,27 @@ def scan_payload(payload, prohibited_terms=None, _path: str = "$") -> list:
                             sample=text[:40],
                         )
                     )
-                elif _EMBEDDED_PHONE_PATTERN.search(text):
+                else:
                     # A number written inside a free text comment is the usual
-                    # way a contact detail reaches an export.
-                    findings.append(
-                        ScanFinding(
-                            path=path, kind="phone",
-                            message="A telephone number appears inside this text.",
-                            sample=text[:60],
-                        )
-                    )
+                    # way a contact detail reaches an export: a note that reads
+                    # "ring the daughter on ..." rather than a field called
+                    # telephone.
+                    for match in _DIGIT_RUN_PATTERN.finditer(text):
+                        fragment = match.group(1)
+                        if _is_structural(path, fragment):
+                            continue
+                        if _looks_like_a_contact_number(fragment):
+                            findings.append(
+                                ScanFinding(
+                                    path=path, kind="phone",
+                                    message=(
+                                        "A run of digits inside this text is "
+                                        "the length of a telephone number."
+                                    ),
+                                    sample=text[:60],
+                                )
+                            )
+                            break
 
     walk(payload, _path)
     return findings
