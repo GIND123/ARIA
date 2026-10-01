@@ -104,6 +104,10 @@ class MainWindow(QMainWindow):
         #: drawn during that time belongs to the dialog rather than to the
         #: status bar.
         self._calibration_dialog = None
+        #: Which side the view was last moved to, so that switching sides can
+        #: carry the position within the side across rather than jumping.
+        self._last_focused_side = None
+        self._suppress_side_focus = False
 
         self.setWindowTitle(f"{APP_NAME}   {APP_LONG_NAME}")
         self.setWindowIcon(application_icon())
@@ -721,6 +725,12 @@ class MainWindow(QMainWindow):
         # each other every time the layout changed.
         self.canvas.zoom_changed.connect(self._on_zoom_changed)
 
+        # Every pane shows the value a hand drawn measurement carries.
+        for pane in self.workspace.panes.values():
+            pane.canvas.set_value_provider(self._measurement_label)
+
+        self.controller.calibration_changed.connect(self._on_calibration_for_labels)
+
     # -- modules -------------------------------------------------------------
 
     def set_module(self, key: str) -> None:
@@ -984,6 +994,7 @@ class MainWindow(QMainWindow):
 
     def _on_class_activated(self, class_key: str, side) -> None:
         self.canvas.set_active_class(class_key, side)
+        self.focus_side(side)
         try:
             cls = get_class(class_key)
         except KeyError:
@@ -1028,6 +1039,68 @@ class MainWindow(QMainWindow):
         if key:
             self.annotate_panel.active_class = key
             self.annotate_panel._select_class(key)
+
+    #: Where the middle of each side sits across the image width. Patient right
+    #: is on the left of a panoramic image, which is why these are not the
+    #: order a reader expects.
+    SIDE_CENTRES = {"R": 0.28, "L": 0.72, "M": 0.50}
+
+    def _whole_image_visible(self) -> bool:
+        """True when the image already fits, so there is nothing to move to."""
+        image = self.controller.image
+        if image is None:
+            return True
+        viewport = self.canvas.viewport().rect()
+        if viewport.width() < 4 or image.columns <= 0:
+            return True
+        fit = viewport.width() / float(image.columns)
+        return self.canvas.zoom_factor() <= fit * 1.05
+
+    def focus_side(self, side) -> None:
+        """Move the view to the side being annotated.
+
+        Choosing a side used to change only which label the next object was
+        given. On a magnified image that left somebody looking at one half of
+        the mandible while drawing on the other.
+
+        When the image is magnified, the position within the side is carried
+        across, so leaving the right antegonial region arrives at the left
+        antegonial region rather than at the middle of the left side. Zoomed
+        out far enough to see the whole mandible there is nothing to move to,
+        so nothing moves.
+        """
+        image = self.controller.image
+        if image is None or self._suppress_side_focus:
+            return
+
+        key = getattr(side, "value", str(side))
+        target = self.SIDE_CENTRES.get(key)
+        if target is None:
+            return
+
+        if self._whole_image_visible():
+            self._last_focused_side = side
+            return
+
+        canvas = self.canvas
+        current = canvas.mapToScene(canvas.viewport().rect().center())
+        previous = self._last_focused_side
+        source = self.SIDE_CENTRES.get(getattr(previous, "value", str(previous)))
+
+        if source is not None and abs(source - target) > 1e-6:
+            offset = current.x() - image.columns * source
+            if "M" not in (key, getattr(previous, "value", "")):
+                offset = -offset        # the two sides are mirror images
+            x = image.columns * target + offset
+        else:
+            x = image.columns * target
+
+        x = max(0.0, min(float(image.columns), x))
+        canvas.centre_on_scene(x, current.y())
+        self._last_focused_side = side
+
+        name = getattr(side, "display", key)
+        self.statusBar().showMessage(f"Showing the {name.lower()} side.", 3000)
 
     def switch_side(self) -> None:
         current = Side(self.side_combo.currentData())
@@ -1127,6 +1200,20 @@ class MainWindow(QMainWindow):
         self._apply_display(settings)
         if hasattr(self, "filter_actions") and settings.filter_name in self.filter_actions:
             self.filter_actions[settings.filter_name].setChecked(True)
+
+    def _measurement_label(self, annotation) -> str:
+        """The value drawn beside a measurement, and nothing beside anything
+        else: an anatomical landmark is not a number to be read off."""
+        from ..core.schema import MEASUREMENT_CLASSES
+
+        if annotation.class_key not in MEASUREMENT_CLASSES:
+            return ""
+        return self.controller.measurement_text(annotation, short=True)
+
+    def _on_calibration_for_labels(self, _calibration) -> None:
+        """A new scale changes every measurement already on the image."""
+        for pane in self.workspace.panes.values():
+            pane.canvas.refresh_value_labels()
 
     def _on_zoom_changed(self, factor: float) -> None:
         """Zooming by wheel, keyboard or toolbar moves the slider too, so the
@@ -1266,23 +1353,30 @@ class MainWindow(QMainWindow):
             dialog.accept_measurement(end[0] - start[0], end[1] - start[1])
             return
 
-        calibration = (
-            self.controller.case_data.case.calibration
-            if self.controller.case_data is not None else None
+        if self.controller.case_data is None:
+            return
+
+        # The line is kept, as an annotation like any other. It used to vanish
+        # the moment the second point landed, with its value shown once in the
+        # status bar and then gone, so a measurement could be taken but never
+        # read back, checked or exported.
+        from ..core.models import Annotation
+
+        annotation = Annotation(
+            set_id=self.controller.case_data.annotation_set.id,
+            class_key="free_measurement",
+            side="NA",
+            geometry_type="line",
         )
-        if calibration is not None and calibration.millimetres_available:
-            millimetres = calibration.distance_mm(end[0] - start[0], end[1] - start[1])
-            self.statusBar().showMessage(
-                f"{length_px:.1f} px, {millimetres:.2f} mm. "
-                f"{'Checked calibration.' if calibration.is_verified else 'Unchecked calibration, accuracy unmeasured.'}",
-                8000,
-            )
-        else:
-            self.statusBar().showMessage(
-                f"{length_px:.1f} px. Millimetres need a calibration: "
-                f"Measure, Calibrate.",
-                8000,
-            )
+        annotation.set_points([tuple(start), tuple(end)])
+        if not self.controller.add_annotation(annotation):
+            return
+
+        self.statusBar().showMessage(
+            f"Measured {self.controller.measurement_text(annotation)}. "
+            f"It is kept with the case and listed under Objects.",
+            8000,
+        )
 
     # -- texture -------------------------------------------------------------
 

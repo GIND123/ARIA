@@ -15,7 +15,8 @@ recommend treatment.
 2. [Signing in](#signing-in)
 3. [The workspace](#the-workspace)
 4. [Adjusting the image](#adjusting-the-image)
-5. [Patient factors](#patient-factors)
+5. [Measuring and choosing what you see](#measuring-and-choosing-what-you-see)
+6. [Patient factors](#patient-factors)
 6. [Importing images](#importing-images)
 6. [Calibration and units](#calibration-and-units)
 7. [Annotating a case](#annotating-a-case)
@@ -179,6 +180,34 @@ and the magnification follows whatever the zoom is doing, however you changed it
 
 If the panel is not there, View, Image display brings it back, and View, Reset
 panel layout puts both side panels back where they started.
+
+---
+
+## Measuring and choosing what you see
+
+**The ruler keeps what it measures.** Click the two ends of anything and the
+line stays on the image with its value beside it. In pixels until the case is
+calibrated, in millimetres afterwards, and the value updates by itself when the
+scale changes. Each one is an object like any other, so it appears under
+Objects, it can be undone, and it goes into the export.
+
+**Every object has a tick.** Untick it and it comes off the image; nothing is
+deleted, and the tick comes back with the case. **Show all** and **Hide all**
+do the lot, and **Isolate selected** leaves only what you have selected, which
+is the quickest way back to one structure on a radiograph carrying both
+cortical borders, four index lines and a dozen landmarks.
+
+**The view follows the side.** Choose Right, Left or Midline while the image is
+magnified and the view moves to that part of the mandible. The position within
+the side is carried across, so leaving the right antegonial region arrives at
+the left antegonial region rather than at the middle of the left side. Zoomed
+out far enough to see the whole mandible, nothing moves, because there is
+nowhere to move to.
+
+**Finishing a side moves you to the other one.** When every required label on
+the right is done, ARIA switches to the left and says so. It happens once per
+side, so going back to correct something does not keep throwing you across the
+image.
 
 ---
 

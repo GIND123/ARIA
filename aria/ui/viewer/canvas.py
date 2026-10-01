@@ -122,6 +122,7 @@ class ImageCanvas(QGraphicsView):
         self._pending_points: list = []
         self._pending_item = None
         self._ruler_points: list = []
+        self._value_provider = None
         self._brush_radius = 12.0
         self._brush_mask = None
         self._brush_target = None
@@ -204,6 +205,32 @@ class ImageCanvas(QGraphicsView):
             self._scene.removeItem(self._pending_item)
         self._pending_item = None
 
+    def set_value_provider(self, provider) -> None:
+        """Supply the function that turns an annotation into its value label.
+
+        The canvas knows the geometry but not the calibration, so the value a
+        measurement carries is computed where both are known and handed back in
+        here for drawing.
+        """
+        self._value_provider = provider
+        self.refresh_value_labels()
+
+    def _value_text(self, annotation) -> str:
+        if self._value_provider is None:
+            return ""
+        try:
+            return self._value_provider(annotation)
+        except Exception:
+            # A label that cannot be computed is left blank rather than taking
+            # the whole canvas down with it.
+            return ""
+
+    def refresh_value_labels(self) -> None:
+        """Recompute every value label, after a calibration changes."""
+        for item in self._items.values():
+            item.value_text = self._value_text(item.annotation)
+            item.update()
+
     def load_annotations(self, annotations) -> None:
         self.clear_annotations()
         for annotation in annotations:
@@ -214,6 +241,7 @@ class ImageCanvas(QGraphicsView):
         item.set_line_width(self.annotation_line_width)
         item.set_handle_size(self.landmark_size)
         item.set_label_visible(self.labels_visible)
+        item.value_text = self._value_text(annotation)
         if annotation.geometry_type == GeometryType.MASK.value and annotation.mask_rle:
             mask, bbox = decode_mask(annotation.mask_rle, annotation.mask_bbox)
             if mask is not None:

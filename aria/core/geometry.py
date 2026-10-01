@@ -548,6 +548,19 @@ def polygon_area(points: Sequence[Point]) -> float:
     return abs(total) / 2.0
 
 
+def polygon_area_px(points: Sequence[Point], geometry_type: str = "polygon") -> float:
+    """Area in square pixels, for whichever shape the points describe.
+
+    A box is stored as two opposite corners rather than four, so taking the
+    shoelace area of those two points would give nothing. The geometry type
+    says which reading is meant.
+    """
+    if geometry_type in ("box", "roi_rect") and len(points) >= 2:
+        (x0, y0), (x1, y1) = points[0], points[1]
+        return abs(x1 - x0) * abs(y1 - y0)
+    return polygon_area(points)
+
+
 def polygon_centroid(points: Sequence[Point]) -> Point:
     if len(points) < 3:
         xs = [p[0] for p in points] or [0.0]

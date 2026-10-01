@@ -23,6 +23,7 @@ from dataclasses import asdict
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..core.audit import AuditEvent
+from ..core.geometry import polygon_area_px
 from ..core.measurements import MeasurementEngine
 from ..core.models import (
     Annotation,
@@ -769,6 +770,68 @@ class Controller(QObject):
         self.calibration_changed.emit(calibration)
         self.recompute()
         return True
+
+    def measurement_value(self, annotation) -> dict:
+        """The number a hand drawn measurement carries, with its units.
+
+        Returned rather than formatted so the canvas, the object list and the
+        export can each present it their own way without three copies of the
+        arithmetic.
+        """
+        points = annotation.points()
+        calibration = (
+            self.case_data.case.calibration if self.case_data is not None else None
+        )
+        out = {
+            "kind": "", "pixels": None, "millimetres": None,
+            "unit": "px", "calibrated": False,
+            "verified": bool(calibration and calibration.is_verified),
+        }
+        if len(points) < 2:
+            return out
+
+        if annotation.class_key == "free_area" or annotation.geometry_type in (
+            "polygon", "box", "roi_rect",
+        ):
+            out["kind"] = "area"
+            out["pixels"] = polygon_area_px(points, annotation.geometry_type)
+            if calibration is not None and calibration.millimetres_available:
+                # Each axis carries its own scale, so an area converts through
+                # the product of the two rather than one squared.
+                row = calibration.effective_row_mm or 0.0
+                col = calibration.effective_col_mm or 0.0
+                out["millimetres"] = out["pixels"] * row * col
+                out["calibrated"] = True
+        else:
+            out["kind"] = "length"
+            total = 0.0
+            for (x0, y0), (x1, y1) in zip(points, points[1:]):
+                total += ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+            out["pixels"] = total
+            if calibration is not None and calibration.millimetres_available:
+                millimetres = 0.0
+                for (x0, y0), (x1, y1) in zip(points, points[1:]):
+                    millimetres += calibration.distance_mm(x1 - x0, y1 - y0)
+                out["millimetres"] = millimetres
+                out["calibrated"] = True
+        out["unit"] = "mm" if out["calibrated"] else "px"
+        return out
+
+    def measurement_text(self, annotation, short: bool = False) -> str:
+        """The same value as a label to put on screen."""
+        value = self.measurement_value(annotation)
+        if value["pixels"] is None:
+            return ""
+        squared = "²" if value["kind"] == "area" else ""
+        if value["calibrated"]:
+            text = f"{value['millimetres']:.2f} mm{squared}"
+            if short:
+                return text
+            if not value["verified"]:
+                text += "  (scale unchecked)"
+            return text
+        text = f"{value['pixels']:.1f} px{squared}"
+        return text if short else text + "  (no scale set)"
 
     def set_patient_factors(self, case_id: str, factors) -> bool:
         """Record the confounders for a case.

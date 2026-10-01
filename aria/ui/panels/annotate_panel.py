@@ -12,7 +12,7 @@ relying on colour vision.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -248,6 +248,38 @@ class AnnotatePanel(QWidget):
         self.objects_section = CollapsibleSection("Objects on this case", self, True, "polyline")
         body = self.objects_section.body_layout()
 
+        # Each row carries its own tick for whether the object is drawn. It
+        # used to be reachable only by right clicking, which meant an annotator
+        # with forty objects on an image had no way of seeing what could be
+        # turned off, let alone of doing it quickly.
+        hint = QLabel(
+            "Untick an object to take it off the image. Nothing is deleted, "
+            "and the tick comes back with the case.",
+            self,
+        )
+        hint.setWordWrap(True)
+        hint.setProperty("dim", True)
+        body.addWidget(hint)
+
+        show_row = QHBoxLayout()
+        show_row.setSpacing(4)
+        self.show_all_button = make_button("Show all", "visible", parent=self)
+        self.hide_all_button = make_button("Hide all", "hidden", parent=self)
+        self.isolate_button = make_button("Isolate selected", "cursor", parent=self)
+        self.isolate_button.setToolTip(
+            "Show only what is selected, and take everything else off the "
+            "image. The quickest way to look at one structure on a crowded "
+            "radiograph."
+        )
+        for b in (self.show_all_button, self.hide_all_button, self.isolate_button):
+            show_row.addWidget(b)
+        show_row.addStretch(1)
+        body.addLayout(show_row)
+
+        self._suppress_ticks = False
+        #: Sides already moved to automatically on this case, so the
+        #: move happens once rather than on every later edit.
+        self._sides_advanced_from: set = set()
         self.object_list = QListWidget(self)
         self.object_list.setAlternatingRowColors(True)
         self.object_list.setMinimumHeight(150)
@@ -392,6 +424,12 @@ class AnnotatePanel(QWidget):
         c.case_closed.connect(self._on_case_closed)
         c.annotations_changed.connect(self.refresh_labels)
         c.annotations_changed.connect(self.refresh_objects)
+        # Checked after the lists have been rebuilt, so the move happens on a
+        # view that already shows the side as finished.
+        c.annotations_changed.connect(
+            lambda: QTimer.singleShot(0, self.maybe_advance_side)
+        )
+        c.case_opened.connect(lambda _d: self._sides_advanced_from.clear())
         c.grades_changed.connect(self.refresh_grades)
         c.flags_changed.connect(self.refresh_flags)
         c.validation_changed.connect(self.refresh_checks)
@@ -411,6 +449,10 @@ class AnnotatePanel(QWidget):
         self.object_list.itemSelectionChanged.connect(self._on_object_selection)
         self.object_list.itemDoubleClicked.connect(self._on_object_double_clicked)
         self.object_list.customContextMenuRequested.connect(self._on_object_context)
+        self.object_list.itemChanged.connect(self._on_object_tick)
+        self.show_all_button.clicked.connect(lambda: self.set_all_visible(True))
+        self.hide_all_button.clicked.connect(lambda: self.set_all_visible(False))
+        self.isolate_button.clicked.connect(self.isolate_selected)
         self.visibility_button.clicked.connect(self._toggle_visibility)
         self.lock_button.clicked.connect(self._toggle_lock)
         self.copy_button.clicked.connect(lambda: self._duplicate(False))
@@ -603,6 +645,56 @@ class AnnotatePanel(QWidget):
             return "missing" if required else "optional"
         return "done"
 
+    def side_is_complete(self, side: Side) -> bool:
+        """True when every required, side scoped label on this side is done.
+
+        Only side scoped classes count. The midline landmarks and the whole
+        mandible outline belong to neither side, so waiting for them would mean
+        a side was never finished.
+        """
+        data = self.controller.case_data
+        if data is None:
+            return False
+        schema = self.controller.schema
+        required = set(schema.required_classes)
+        sided = [
+            c for c in schema.active_classes()
+            if c.side_scoped and c.key in required
+        ]
+        if not sided:
+            return False
+        return all(
+            self._class_state(data, c.key, side, True) in ("done", "absent")
+            for c in sided
+        )
+
+    def maybe_advance_side(self) -> None:
+        """Move to the other side once this one is finished.
+
+        Both sides are annotated on every case, so finishing the right and then
+        having to remember to choose the left is a step that exists only
+        because nobody removed it. Going back is one click, and the move is
+        announced rather than silent.
+        """
+        if self.active_side not in (Side.RIGHT, Side.LEFT):
+            return
+        other = Side.LEFT if self.active_side is Side.RIGHT else Side.RIGHT
+        if other in self._sides_advanced_from:
+            # Only ever offered once per side per case, so that editing a
+            # finished side does not keep throwing the person across the image.
+            return
+        if not self.side_is_complete(self.active_side) or self.side_is_complete(other):
+            return
+
+        finished = self.active_side
+        self._sides_advanced_from.add(other)
+        self.set_side(other)
+        self.controller.status_message.emit(
+            f"The {finished.display.lower()} side is complete. Moved to the "
+            f"{other.display.lower()} side.",
+            7000,
+        )
+
     def _select_class(self, key: str) -> None:
         root = self.label_tree.invisibleRootItem()
         for i in range(root.childCount()):
@@ -679,6 +771,7 @@ class AnnotatePanel(QWidget):
         selected = {
             item.data(Qt.UserRole) for item in self.object_list.selectedItems()
         }
+        self._suppress_ticks = True
         self.object_list.blockSignals(True)
         self.object_list.clear()
 
@@ -708,6 +801,8 @@ class AnnotatePanel(QWidget):
             text = f"{cls.short_code} {side.value}   {cls.display_name}{suffix}"
             item = QListWidgetItem(text, self.object_list)
             item.setData(Qt.UserRole, annotation.id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked if annotation.hidden else Qt.Checked)
             item.setIcon(
                 make_icon(
                     "hidden" if annotation.hidden else "lock" if annotation.locked else "polyline",
@@ -729,6 +824,71 @@ class AnnotatePanel(QWidget):
                 item.setForeground(_brush(PALETTE.text_disabled))
 
         self.object_list.blockSignals(False)
+        self._suppress_ticks = False
+
+    def _on_object_tick(self, item) -> None:
+        """One object's tick was clicked.
+
+        The change is applied after this handler returns. Hiding an object
+        rebuilds the list, and clearing a list from inside the signal of one of
+        its own rows destroys the row that is still being handled.
+        """
+        if self._suppress_ticks:
+            return
+        annotation_id = item.data(Qt.UserRole)
+        if not annotation_id:
+            return
+        hidden = item.checkState() != Qt.Checked
+        QTimer.singleShot(
+            0,
+            lambda: self.controller.set_annotation_flags(annotation_id, hidden=hidden),
+        )
+
+    def set_all_visible(self, visible: bool) -> None:
+        """Put everything back on the image, or take it all off."""
+        data = self.controller.case_data
+        if data is None:
+            return
+        changed = 0
+        for annotation in data.live_annotations():
+            if annotation.hidden == (not visible):
+                continue
+            self.controller.set_annotation_flags(annotation.id, hidden=not visible)
+            changed += 1
+        self.refresh_objects()
+        self.controller.status_message.emit(
+            f"{changed} objects {'shown' if visible else 'hidden'}."
+            if changed else
+            f"Everything is already {'shown' if visible else 'hidden'}.",
+            4000,
+        )
+
+    def isolate_selected(self) -> None:
+        """Show only what is selected.
+
+        A radiograph with both borders, both foramina, four index lines and a
+        grading region on it is unreadable. This is the fastest way back to one
+        structure, and Show all is next to it.
+        """
+        data = self.controller.case_data
+        if data is None:
+            return
+        chosen = set(self._selected_annotation_ids())
+        if not chosen:
+            self.controller.status_message.emit(
+                "Select the objects to isolate first.", 5000
+            )
+            return
+        for annotation in data.live_annotations():
+            hidden = annotation.id not in chosen
+            if annotation.hidden != hidden:
+                self.controller.set_annotation_flags(annotation.id, hidden=hidden)
+        self.refresh_objects()
+        self.controller.status_message.emit(
+            f"Showing {len(chosen)} of {len(data.live_annotations())} objects. "
+            f"Show all brings the rest back.",
+            6000,
+        )
 
     def _selected_annotation_ids(self) -> list:
         return [item.data(Qt.UserRole) for item in self.object_list.selectedItems()]

@@ -645,9 +645,47 @@ LABEL_CLASSES: tuple[LabelClass, ...] = (
         required_by_default=False,
         requirements=("FR 029",),
     ),
+    LabelClass(
+        key="free_measurement",
+        display_name="Measurement",
+        short_code="MSR",
+        geometry=GeometryType.LINE,
+        category=LabelCategory.OPTIONAL,
+        colour=PALETTE["amber_deep"],
+        glyph="↔",
+        description=(
+            "A distance measured by hand with the ruler. Kept with the case so "
+            "the number can be read again, checked and exported, rather than "
+            "appearing once in the status bar and being lost."
+        ),
+        required_by_default=False,
+        side_scoped=False,
+        requirements=("FR 031",),
+    ),
+    LabelClass(
+        key="free_area",
+        display_name="Area",
+        short_code="ARE",
+        geometry=GeometryType.POLYGON,
+        category=LabelCategory.OPTIONAL,
+        colour=PALETTE["amber_deep"],
+        glyph="◱",
+        description=(
+            "A region outlined by hand to read off its area. Measured, kept "
+            "and exported like any other object."
+        ),
+        required_by_default=False,
+        side_scoped=False,
+        requirements=("FR 031",),
+    ),
 )
 
 CLASS_BY_KEY: dict[str, LabelClass] = {c.key: c for c in LABEL_CLASSES}
+
+#: Objects the person draws to read a number off the image, rather than to
+#: record anatomy. They are annotations like any other, which is what gives
+#: them persistence, undo, an audit entry and a place in the export.
+MEASUREMENT_CLASSES = ("free_measurement", "free_area")
 
 #: Canonical name mapping for the cortical width family. The clinical team
 #: signs off the naming convention (specification section 13); ARIA stores one
@@ -758,6 +796,10 @@ class ProjectSchema:
 
     schema_version: str = "1.0.0"
     mandible_mode: str = "whole"          # whole or hemimandible (FR 020)
+    #: Which published reference set the indices are compared against. Empty by
+    #: default: the published means differ by population, and picking one on an
+    #: investigator's behalf is a conclusion they never agreed to.
+    reference_set: str = ""
     required_classes: list = field(default_factory=lambda: list(default_required_keys()))
     allowed_omissions: list = field(default_factory=list)
     optional_classes: list = field(
@@ -805,6 +847,7 @@ class ProjectSchema:
         return {
             "schema_version": self.schema_version,
             "mandible_mode": self.mandible_mode,
+            "reference_set": self.reference_set,
             "required_classes": list(self.required_classes),
             "allowed_omissions": list(self.allowed_omissions),
             "optional_classes": list(self.optional_classes),

@@ -108,6 +108,10 @@ class AnnotationGraphicsItem(QGraphicsObject):
         self._show_handles = False
         self._hover = False
         self._label_visible = True
+        #: Set for objects drawn to read a number off the image. The
+        #: value is shown beside the shape, because a measurement whose
+        #: number is somewhere else is not much of a measurement.
+        self.value_text = ""
         self._line_width = 2.0
         self._handle_size = 8.0
 
@@ -267,7 +271,12 @@ class AnnotationGraphicsItem(QGraphicsObject):
         return pen
 
     def _draw_label(self, painter, anchor: QPointF) -> None:
-        if not self._label_visible or not self.short_code:
+        if not self._label_visible:
+            return
+        text = self.short_code
+        if self.value_text:
+            text = f"{text}  {self.value_text}" if text else self.value_text
+        if not text:
             return
         painter.save()
         painter.resetTransform()
@@ -283,7 +292,6 @@ class AnnotationGraphicsItem(QGraphicsObject):
         font.setBold(True)
         painter.setFont(font)
         metrics = painter.fontMetrics()
-        text = self.short_code
         width = metrics.horizontalAdvance(text) + 8
         height = metrics.height() + 2
         x = screen.x() + 9
