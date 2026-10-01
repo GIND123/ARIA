@@ -11,7 +11,15 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QIcon,
+    QIconEngine,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 
 from .theme import PALETTE
 
@@ -557,16 +565,69 @@ def pixmap(name: str, size: int = 20, colour: str | None = None, ratio: float = 
     return pm
 
 
+class _PainterIconEngine(QIconEngine):
+    """Draws an icon at whatever size it is asked for.
+
+    The previous approach added three pixmaps per state, at one, one and a half
+    and two times the device ratio. All three had the same logical size, so
+    QIcon could not tell them apart, and it handed back whichever it liked:
+    often the double sized one, drawn at double size, which is why so many
+    icons appeared to spill out of their box and lose their edges. Painting on
+    demand removes the guesswork, and gives a crisp icon at every size instead
+    of one that is resampled from a fixed pixmap.
+    """
+
+    def __init__(self, name: str, colour: str | None = None):
+        super().__init__()
+        self.name = name
+        self.colour = colour
+
+    def _colour_for(self, mode, state) -> str:
+        if self.colour is not None:
+            return self.colour
+        if mode == QIcon.Disabled:
+            return PALETTE.text_disabled
+        if state == QIcon.On:
+            return PALETTE.accent
+        if mode in (QIcon.Active, QIcon.Selected):
+            return PALETTE.text
+        return PALETTE.text_dim
+
+    def paint(self, painter, rect, mode, state) -> None:
+        side = min(rect.width(), rect.height())
+        if side <= 0:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        # Centred, so a square icon in an oblong button sits in the middle
+        # rather than against one edge.
+        painter.translate(
+            rect.x() + (rect.width() - side) / 2.0,
+            rect.y() + (rect.height() - side) / 2.0,
+        )
+        painter.scale(side / BASE, side / BASE)
+        painter.setBrush(Qt.NoBrush)
+        fn = PAINTERS.get(self.name)
+        if fn is not None:
+            fn(painter, QColor(self._colour_for(mode, state)))
+        painter.restore()
+
+    def pixmap(self, size, mode, state) -> QPixmap:
+        side = min(size.width(), size.height())
+        return pixmap(self.name, side, self._colour_for(mode, state))
+
+    def clone(self) -> QIconEngine:
+        return _PainterIconEngine(self.name, self.colour)
+
+
 def icon(name: str, size: int = 20, colour: str | None = None) -> QIcon:
-    """Return a QIcon with normal, active and disabled renderings."""
-    result = QIcon()
-    base = colour or PALETTE.text_dim
-    for ratio in (1.0, 1.5, 2.0):
-        result.addPixmap(pixmap(name, size, base, ratio), QIcon.Normal, QIcon.Off)
-        result.addPixmap(pixmap(name, size, PALETTE.text, ratio), QIcon.Active, QIcon.Off)
-        result.addPixmap(pixmap(name, size, PALETTE.accent, ratio), QIcon.Normal, QIcon.On)
-        result.addPixmap(pixmap(name, size, PALETTE.text_disabled, ratio), QIcon.Disabled, QIcon.Off)
-    return result
+    """An icon that paints itself at whatever size it is given.
+
+    ``size`` is kept for callers that pass it, but no longer fixes the
+    rendering: the engine is asked for the size actually needed at the moment
+    of drawing.
+    """
+    return QIcon(_PainterIconEngine(name, colour))
 
 
 def colour_swatch(colour: str, size: int = 14, dashed: bool = False) -> QPixmap:
