@@ -13,7 +13,7 @@ relying on colour vision.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from ...core.schema import (
     LABEL_CLASSES,
+    MEASUREMENT_CLASSES,
     LabelCategory,
     MCIGrade,
     Presence,
@@ -280,11 +281,28 @@ class AnnotatePanel(QWidget):
         #: Sides already moved to automatically on this case, so the
         #: move happens once rather than on every later edit.
         self._sides_advanced_from: set = set()
-        self.object_list = QListWidget(self)
+        # Grouped, with an eye on every group as well as every object. A
+        # finished case carries both cortical borders, four index lines, a
+        # dozen landmarks a side and a grading region, and the thing an
+        # annotator wants is almost never one object: it is "take the index
+        # lines off so I can see the border underneath".
+        self.object_list = QTreeWidget(self)
+        self.object_list.setColumnCount(2)
+        self.object_list.setHeaderLabels(["", "Object"])
+        self.object_list.setRootIsDecorated(True)
         self.object_list.setAlternatingRowColors(True)
-        self.object_list.setMinimumHeight(150)
+        self.object_list.setMinimumHeight(180)
         self.object_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.object_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.object_list.setUniformRowHeights(True)
+        # A tree indents column zero, so a child's eye would be pushed into the
+        # next column and land on top of the name. The indent is kept small and
+        # the column is wide enough to hold both it and the icon.
+        self.object_list.setIndentation(12)
+        header = self.object_list.header()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        self.object_list.setColumnWidth(0, 46)
         body.addWidget(self.object_list)
 
         row = QHBoxLayout()
@@ -449,7 +467,7 @@ class AnnotatePanel(QWidget):
         self.object_list.itemSelectionChanged.connect(self._on_object_selection)
         self.object_list.itemDoubleClicked.connect(self._on_object_double_clicked)
         self.object_list.customContextMenuRequested.connect(self._on_object_context)
-        self.object_list.itemChanged.connect(self._on_object_tick)
+        self.object_list.itemClicked.connect(self._on_object_clicked)
         self.show_all_button.clicked.connect(lambda: self.set_all_visible(True))
         self.hide_all_button.clicked.connect(lambda: self.set_all_visible(False))
         self.isolate_button.clicked.connect(self.isolate_selected)
@@ -763,18 +781,33 @@ class AnnotatePanel(QWidget):
 
     # -- objects -------------------------------------------------------------
 
+    #: Marks a row as a group rather than one object, so a click on the eye
+    #: column knows whether it is toggling one thing or a whole category.
+    GROUP_ROLE = Qt.UserRole + 1
+    #: Whether a row's object is currently off the image, kept on the row
+    #: rather than read back from the colour it happens to be painted in.
+    HIDDEN_ROLE = Qt.UserRole + 2
+
     def refresh_objects(self) -> None:
         data = self.controller.case_data
         if data is None:
             self.object_list.clear()
             return
+
         selected = {
-            item.data(Qt.UserRole) for item in self.object_list.selectedItems()
+            item.data(0, Qt.UserRole) for item in self.object_list.selectedItems()
         }
+        collapsed = {
+            self.object_list.topLevelItem(i).text(1)
+            for i in range(self.object_list.topLevelItemCount())
+            if not self.object_list.topLevelItem(i).isExpanded()
+        }
+
         self._suppress_ticks = True
         self.object_list.blockSignals(True)
         self.object_list.clear()
 
+        grouped: dict = {}
         for annotation in sorted(
             data.live_annotations(), key=lambda a: (a.class_key, a.side)
         ):
@@ -782,32 +815,73 @@ class AnnotatePanel(QWidget):
                 cls = get_class(annotation.class_key)
             except KeyError:
                 continue
+            grouped.setdefault(cls.category, []).append((annotation, cls))
+
+        for category, title in CATEGORY_ORDER:
+            entries = grouped.pop(category, [])
+            if not entries:
+                continue
+            self._add_object_group(title, entries, selected, collapsed)
+
+        # Anything whose category is not in the usual running order still has
+        # to appear, or an object could be hidden from the one list that is
+        # meant to show everything.
+        for category, entries in grouped.items():
+            title = getattr(category, "value", str(category)).replace("_", " ").capitalize()
+            self._add_object_group(title, entries, selected, collapsed)
+
+        self.object_list.blockSignals(False)
+        self._suppress_ticks = False
+
+    def _add_object_group(self, title, entries, selected, collapsed) -> None:
+        hidden_count = sum(1 for a, _c in entries if a.hidden)
+        group = QTreeWidgetItem(self.object_list, ["", f"{title}  ({len(entries)})"])
+        group.setData(0, self.GROUP_ROLE, True)
+        group.setFirstColumnSpanned(False)
+        group.setIcon(0, self._eye_icon(hidden_count, len(entries)))
+        group.setToolTip(
+            0,
+            "Show or hide every object in this group."
+            if hidden_count != len(entries) else
+            "Bring this whole group back onto the image.",
+        )
+        font = group.font(1)
+        font.setBold(True)
+        group.setFont(1, font)
+        group.setExpanded(f"{title}  ({len(entries)})" not in collapsed)
+
+        for annotation, cls in entries:
             side = Side(annotation.side)
             marks = []
-            if annotation.hidden:
-                marks.append("hidden")
             if annotation.locked:
                 marks.append("locked")
             if annotation.ambiguous:
                 marks.append("ambiguous")
             if annotation.presence != Presence.PRESENT.value:
                 marks.append(Presence(annotation.presence).display.lower())
-            if annotation.properties.get("origin") == "geometric_construction":
+            origin = annotation.properties.get("origin")
+            if origin == "geometric_construction":
                 marks.append("constructed")
-            if annotation.properties.get("origin") == "mirrored":
+            elif origin == "mirrored":
                 marks.append("mirrored")
 
             suffix = f"   [{', '.join(marks)}]" if marks else ""
-            text = f"{cls.short_code} {side.value}   {cls.display_name}{suffix}"
-            item = QListWidgetItem(text, self.object_list)
-            item.setData(Qt.UserRole, annotation.id)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked if annotation.hidden else Qt.Checked)
-            item.setIcon(
-                make_icon(
-                    "hidden" if annotation.hidden else "lock" if annotation.locked else "polyline",
-                    13, cls.colour,
-                )
+            label = f"{cls.short_code} {side.value}   {cls.display_name}{suffix}"
+            value = self.controller.measurement_text(annotation, short=True)                 if cls.key in MEASUREMENT_CLASSES else ""
+            if value:
+                label = f"{label}   {value}"
+
+            row = QTreeWidgetItem(group, ["", label])
+            row.setData(0, Qt.UserRole, annotation.id)
+            row.setData(0, self.GROUP_ROLE, False)
+            row.setData(0, self.HIDDEN_ROLE, bool(annotation.hidden))
+            row.setIcon(0, self._eye_icon(1 if annotation.hidden else 0, 1))
+            row.setIcon(1, QIcon(colour_swatch(cls.colour, 12, side is Side.LEFT)))
+            row.setToolTip(
+                0,
+                "Hidden. Click to bring it back onto the image."
+                if annotation.hidden else
+                "On the image. Click to take it off.",
             )
             detail = [
                 cls.display_name,
@@ -815,34 +889,64 @@ class AnnotatePanel(QWidget):
                 f"Points: {len(annotation.points())}",
                 f"Revision: {annotation.revision}",
             ]
+            if value:
+                detail.append(f"Measures: {value}")
             if annotation.notes:
                 detail.append(annotation.notes)
-            item.setToolTip("\n".join(detail))
+            row.setToolTip(1, "\n".join(detail))
             if annotation.id in selected:
-                item.setSelected(True)
+                row.setSelected(True)
             if annotation.hidden:
-                item.setForeground(_brush(PALETTE.text_disabled))
+                row.setForeground(1, _brush(PALETTE.text_disabled))
 
-        self.object_list.blockSignals(False)
-        self._suppress_ticks = False
+    @staticmethod
+    def _eye_icon(hidden: int, total: int):
+        """An open eye, a crossed one, or a dimmed eye for a mixed group."""
+        if hidden == 0:
+            return make_icon("visible", 14, PALETTE.text)
+        if hidden >= total:
+            return make_icon("hidden", 14, PALETTE.text_disabled)
+        return make_icon("visible", 14, PALETTE.text_dim)
 
-    def _on_object_tick(self, item) -> None:
-        """One object's tick was clicked.
-
-        The change is applied after this handler returns. Hiding an object
-        rebuilds the list, and clearing a list from inside the signal of one of
-        its own rows destroys the row that is still being handled.
-        """
-        if self._suppress_ticks:
+    def _on_object_clicked(self, item, column: int) -> None:
+        """A click in the eye column shows or hides, anywhere else selects."""
+        if column != 0 or self._suppress_ticks:
             return
-        annotation_id = item.data(Qt.UserRole)
+        if item.data(0, self.GROUP_ROLE):
+            ids, hidden = [], 0
+            for i in range(item.childCount()):
+                child = item.child(i)
+                ids.append(child.data(0, Qt.UserRole))
+                hidden += 1 if child.data(0, self.HIDDEN_ROLE) else 0
+            # Showing wins on a mixed group: the common intent is to get
+            # everything back, and hiding again is one more click.
+            target_hidden = hidden == 0
+            QTimer.singleShot(
+                0, lambda: self._set_hidden_for(ids, target_hidden)
+            )
+            return
+
+        annotation_id = item.data(0, Qt.UserRole)
         if not annotation_id:
             return
-        hidden = item.checkState() != Qt.Checked
-        QTimer.singleShot(
-            0,
-            lambda: self.controller.set_annotation_flags(annotation_id, hidden=hidden),
+        current = self.controller.case_data
+        if current is None:
+            return
+        annotation = next(
+            (a for a in current.live_annotations() if a.id == annotation_id), None
         )
+        if annotation is None:
+            return
+        hidden = not annotation.hidden
+        QTimer.singleShot(
+            0, lambda: self._set_hidden_for([annotation_id], hidden)
+        )
+
+    def _set_hidden_for(self, ids, hidden: bool) -> None:
+        for annotation_id in ids:
+            if annotation_id:
+                self.controller.set_annotation_flags(annotation_id, hidden=hidden)
+        self.refresh_objects()
 
     def set_all_visible(self, visible: bool) -> None:
         """Put everything back on the image, or take it all off."""
@@ -891,7 +995,12 @@ class AnnotatePanel(QWidget):
         )
 
     def _selected_annotation_ids(self) -> list:
-        return [item.data(Qt.UserRole) for item in self.object_list.selectedItems()]
+        # Group rows carry no identifier, so only the object rows answer.
+        return [
+            item.data(0, Qt.UserRole)
+            for item in self.object_list.selectedItems()
+            if item.data(0, Qt.UserRole)
+        ]
 
     def _on_object_selection(self) -> None:
         ids = self._selected_annotation_ids()
@@ -907,14 +1016,16 @@ class AnnotatePanel(QWidget):
         if ids:
             self.focus_requested.emit(ids[0])
 
-    def _on_object_double_clicked(self, item) -> None:
-        self.focus_requested.emit(item.data(Qt.UserRole))
+    def _on_object_double_clicked(self, item, column: int = 0) -> None:
+        annotation_id = item.data(0, Qt.UserRole)
+        if annotation_id:
+            self.focus_requested.emit(annotation_id)
 
     def _on_object_context(self, position) -> None:
         item = self.object_list.itemAt(position)
-        if item is None:
+        if item is None or not item.data(0, Qt.UserRole):
             return
-        annotation_id = item.data(Qt.UserRole)
+        annotation_id = item.data(0, Qt.UserRole)
         annotation = self.controller._find(annotation_id)
         if annotation is None:
             return

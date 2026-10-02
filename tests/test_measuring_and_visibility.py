@@ -201,34 +201,117 @@ class TestAMeasurementIsKept:
 
 
 class TestChoosingWhatIsOnTheImage:
+    """Grouped, with an eye on every group as well as every object.
 
-    def test_every_object_has_its_own_tick(self, window, open_case):
-        _landmarks(window, [("menton", "NA"), ("gonion", "R"), ("gonion", "L")])
+    A finished case carries both cortical borders, four index lines, a dozen
+    landmarks a side and a grading region. What somebody wants is almost never
+    one object: it is "take the index lines off so I can see the border".
+    """
+
+    @staticmethod
+    def _groups(panel):
+        tree = panel.object_list
+        return [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+
+    @staticmethod
+    def _rows(group):
+        return [group.child(i) for i in range(group.childCount())]
+
+    def test_objects_are_grouped_by_what_they_are(self, window, open_case):
+        _landmarks(window, [("menton", "NA"), ("gonion", "R")])
+        set_id = window.controller.case_data.annotation_set.id
+        border = Annotation(
+            set_id=set_id, class_key="periosteal_border", side="R",
+            geometry_type="polyline",
+        )
+        border.set_points([(10.0, 10.0), (50.0, 12.0), (90.0, 14.0)])
+        window.controller.add_annotation(border)
+
+        panel = window.annotate_panel
+        panel.refresh_objects()
+        titles = [g.text(1) for g in self._groups(panel)]
+
+        assert any("Landmarks" in t for t in titles)
+        assert any("Contours" in t for t in titles)
+        assert all("(" in t for t in titles), "A group does not say how many it holds"
+
+    def test_every_row_and_every_group_has_an_eye(self, window, open_case):
+        _landmarks(window, [("menton", "NA"), ("gonion", "R")])
         panel = window.annotate_panel
         panel.refresh_objects()
 
-        assert panel.object_list.count() == 3
-        for i in range(panel.object_list.count()):
-            item = panel.object_list.item(i)
-            assert item.flags() & Qt.ItemIsUserCheckable
-            assert item.checkState() == Qt.Checked
+        for group in self._groups(panel):
+            assert not group.icon(0).isNull(), "A group has no eye to click"
+            for row in self._rows(group):
+                assert not row.icon(0).isNull(), "An object has no eye to click"
 
-    def test_unticking_takes_the_object_off_the_image(self, window, open_case):
+    def test_clicking_an_objects_eye_takes_it_off_the_image(self, window, open_case):
         from PySide6.QtWidgets import QApplication
 
-        made = _landmarks(window, [("menton", "NA"), ("gonion", "R")])
+        _landmarks(window, [("menton", "NA"), ("gonion", "R")])
         panel = window.annotate_panel
         panel.refresh_objects()
 
-        target = panel.object_list.item(0).data(Qt.UserRole)
-        panel.object_list.item(0).setCheckState(Qt.Unchecked)
+        row = self._rows(self._groups(panel)[0])[0]
+        target = row.data(0, Qt.UserRole)
+        panel._on_object_clicked(row, 0)
         QApplication.instance().processEvents()
         QApplication.instance().processEvents()
 
         stored = {a.id: a for a in window.controller.case_data.live_annotations()}
         assert stored[target].hidden
         assert not window.canvas._items[target].isVisible()
-        assert target in made
+
+    def test_clicking_a_group_eye_takes_the_whole_group_off(self, window, open_case):
+        """The thing that was missing: hiding a category in one click."""
+        from PySide6.QtWidgets import QApplication
+
+        _landmarks(window, [("menton", "NA"), ("gonion", "R"), ("gonion", "L")])
+        panel = window.annotate_panel
+        panel.refresh_objects()
+
+        group = self._groups(panel)[0]
+        count = group.childCount()
+        panel._on_object_clicked(group, 0)
+        QApplication.instance().processEvents()
+        QApplication.instance().processEvents()
+
+        hidden = sum(
+            1 for a in window.controller.case_data.live_annotations() if a.hidden
+        )
+        assert hidden == count
+
+    def test_clicking_a_hidden_group_brings_it_all_back(self, window, open_case):
+        from PySide6.QtWidgets import QApplication
+
+        _landmarks(window, [("menton", "NA"), ("gonion", "R")])
+        panel = window.annotate_panel
+        panel.refresh_objects()
+
+        panel._on_object_clicked(self._groups(panel)[0], 0)
+        QApplication.instance().processEvents()
+        QApplication.instance().processEvents()
+        panel.refresh_objects()
+        panel._on_object_clicked(self._groups(panel)[0], 0)
+        QApplication.instance().processEvents()
+        QApplication.instance().processEvents()
+
+        assert not any(a.hidden for a in window.controller.case_data.live_annotations())
+
+    def test_a_click_outside_the_eye_column_does_not_hide(self, window, open_case):
+        """Selecting a row must not make it disappear."""
+        from PySide6.QtWidgets import QApplication
+
+        _landmarks(window, [("menton", "NA")])
+        panel = window.annotate_panel
+        panel.refresh_objects()
+
+        row = self._rows(self._groups(panel)[0])[0]
+        panel._on_object_clicked(row, 1)
+        QApplication.instance().processEvents()
+        QApplication.instance().processEvents()
+
+        assert not any(a.hidden for a in window.controller.case_data.live_annotations())
 
     def test_hiding_does_not_delete(self, window, open_case):
         from PySide6.QtWidgets import QApplication
@@ -236,7 +319,7 @@ class TestChoosingWhatIsOnTheImage:
         _landmarks(window, [("menton", "NA")])
         panel = window.annotate_panel
         panel.refresh_objects()
-        panel.object_list.item(0).setCheckState(Qt.Unchecked)
+        panel._on_object_clicked(self._rows(self._groups(panel)[0])[0], 0)
         QApplication.instance().processEvents()
         QApplication.instance().processEvents()
 
@@ -256,7 +339,7 @@ class TestChoosingWhatIsOnTheImage:
         _landmarks(window, [("menton", "NA"), ("gonion", "R"), ("gonion", "L")])
         panel = window.annotate_panel
         panel.refresh_objects()
-        panel.object_list.item(1).setSelected(True)
+        self._rows(self._groups(panel)[0])[0].setSelected(True)
 
         panel.isolate_selected()
 
@@ -281,13 +364,25 @@ class TestChoosingWhatIsOnTheImage:
         assert not any(a.hidden for a in window.controller.case_data.live_annotations())
         assert messages and "select" in messages[-1].lower()
 
-    def test_the_tick_reflects_a_state_set_elsewhere(self, window, open_case):
-        """Hiding from the context menu has to tick the box too."""
+    def test_the_eye_reflects_a_state_set_elsewhere(self, window, open_case):
+        """Hiding from the context menu has to show on the row too."""
         made = _landmarks(window, [("menton", "NA")])
         window.controller.set_annotation_flags(made[0], hidden=True)
         window.annotate_panel.refresh_objects()
 
-        assert window.annotate_panel.object_list.item(0).checkState() == Qt.Unchecked
+        row = self._rows(self._groups(window.annotate_panel)[0])[0]
+        assert row.data(0, window.annotate_panel.HIDDEN_ROLE) is True
+
+    def test_a_measurement_shows_its_value_in_the_list(self, window, open_case):
+        window._on_ruler(300.0, (100.0, 200.0), (400.0, 200.0))
+        panel = window.annotate_panel
+        panel.refresh_objects()
+
+        texts = [
+            row.text(1)
+            for group in self._groups(panel) for row in self._rows(group)
+        ]
+        assert any("300" in t and "px" in t for t in texts), texts
 
 
 class TestTheViewFollowsTheSide:
