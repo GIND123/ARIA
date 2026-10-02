@@ -256,3 +256,107 @@ class TestTheExportSaysWhetherTheScaleWasEverChecked:
             "verification_error_percent",
         ):
             assert column in CASE_FIELDS, f"{column} would be dropped from cases.csv"
+
+
+class TestWhatTheCalibrationNoticeActuallySays:
+    """A report from the clinic: the notice reads as though it stops a
+    submission, and points at a module that does not exist.
+
+    Pixel spacing in a header describes the detector, so withholding
+    millimetres from it is right. Leaving somebody to infer that their case is
+    stuck, and then sending them to look for Calibration when the control is
+    under Measure, is not.
+    """
+
+    def _issue(self, repo, case, annotator, required):
+        from aria.core.schema import ProjectSchema
+        from aria.core.validation import validate_for_submission
+        from tests.conftest import build_annotation_set
+
+        schema = ProjectSchema()
+        schema.require_calibration_for_submission = required
+        data = build_annotation_set(repo, case, annotator)
+        result = validate_for_submission(data, schema)
+        issue = next(
+            (i for i in result.issues if i.code == "calibration_unvalidated"), None
+        )
+        return result, issue
+
+    def test_unvalidated_spacing_does_not_block_an_ordinary_project(
+        self, repo, imported_case, annotator
+    ):
+        """The default. Pixel measurements and ratios are recorded either way."""
+        repo.confirm_laterality(imported_case.id, annotator.id, "confirmed")
+        result, issue = self._issue(
+            repo, repo.get_case(imported_case.id), annotator, required=False
+        )
+
+        assert issue is not None, "The fixture no longer reproduces the report"
+        assert issue.severity == "warning"
+        assert result.can_submit, "An unvalidated header is stopping a submission"
+
+    def test_the_notice_says_the_case_can_still_be_submitted(
+        self, repo, imported_case, annotator
+    ):
+        repo.confirm_laterality(imported_case.id, annotator.id, "confirmed")
+        _result, issue = self._issue(
+            repo, repo.get_case(imported_case.id), annotator, required=False
+        )
+
+        assert "can still be submitted" in issue.message
+        assert "PMI" in issue.message, (
+            "The notice does not say that the ratios are unaffected"
+        )
+
+    def test_the_notice_says_so_when_it_does_block(
+        self, repo, imported_case, annotator
+    ):
+        repo.confirm_laterality(imported_case.id, annotator.id, "confirmed")
+        result, issue = self._issue(
+            repo, repo.get_case(imported_case.id), annotator, required=True
+        )
+
+        assert issue.severity == "blocker"
+        assert not result.can_submit
+        assert "requires a validated calibration" in issue.message
+
+    def test_the_remedy_names_somewhere_that_exists(
+        self, repo, imported_case, annotator
+    ):
+        """It used to say "Open Calibration", and there is no such module."""
+        repo.confirm_laterality(imported_case.id, annotator.id, "confirmed")
+        _result, issue = self._issue(
+            repo, repo.get_case(imported_case.id), annotator, required=False
+        )
+
+        assert "Measure" in issue.remedy
+        assert "Validate" in issue.remedy
+        assert "Calibrate" in issue.remedy
+        assert "Open Calibration" not in issue.remedy
+
+    def test_the_remedy_is_reachable_from_the_menu(self, paths, repo, annotator, project, monkeypatch):
+        """Both routes the remedy names have to be real actions."""
+        monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+        from PySide6.QtWidgets import QApplication
+
+        from aria.config import Config
+        from aria.security.auth import AuthService
+        from aria.ui.main_window import MainWindow
+
+        config = Config(paths)
+        config.settings.first_run_completed = True
+        config.settings.tour_completed = True
+        config.settings.backup_on_launch = False
+        app = QApplication.instance() or QApplication([])
+        repo.set_actor(annotator)
+        window = MainWindow(
+            repo, paths, config,
+            AuthService(repo, config.settings).start_session(annotator),
+        )
+        try:
+            assert window.action_calibrate is not None
+            assert window.measure_panel.validate_button is not None
+        finally:
+            window.deleteLater()
+            app.processEvents()

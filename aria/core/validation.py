@@ -194,18 +194,33 @@ class SubmissionValidator:
                 )
             return
 
+        required = self.schema.require_calibration_for_submission
         severity = (
-            Severity.BLOCKER.value
-            if self.schema.require_calibration_for_submission
-            else Severity.WARNING.value
+            Severity.BLOCKER.value if required else Severity.WARNING.value
+        )
+        # Whether this stops a submission depends on a project setting, so the
+        # message says which it is. Reading that millimetres are withheld and
+        # assuming the case cannot be submitted is the obvious inference, and
+        # it is wrong on a project that has not asked for millimetres.
+        consequence = (
+            " This project requires a validated calibration before submission."
+            if required else
+            " The case can still be submitted: pixel measurements and the "
+            "dimensionless ratios, including PMI, are recorded either way."
         )
         if cal.status is ValidationStatus.REJECTED:
             result.add(
                 Issue(
                     code="calibration_rejected",
                     severity=severity,
-                    message="The calibration for this case was rejected by a reviewer.",
-                    remedy="Recalibrate using a known length, or record why millimetre values are not required.",
+                    message=(
+                        "The calibration for this case was rejected by a "
+                        "reviewer." + consequence
+                    ),
+                    remedy=(
+                        "Annotate, Calibrate sets the scale from an object of "
+                        "known size and then checks it against a second one."
+                    ),
                     requirement="FR 007",
                 )
             )
@@ -215,10 +230,18 @@ class SubmissionValidator:
                     code="calibration_unvalidated",
                     severity=severity,
                     message=(
-                        "Pixel spacing is present but has not been validated, so "
-                        "millimetre values are withheld."
+                        "The image carries pixel spacing, but spacing describes "
+                        "the detector rather than the patient, so millimetre "
+                        "values are withheld until somebody accepts it."
+                        + consequence
                     ),
-                    remedy="Open Calibration and validate the spacing, or complete a manual calibration.",
+                    remedy=(
+                        "Measure, then Validate accepts the spacing as it "
+                        "stands. Annotate, Calibrate sets the scale from an "
+                        "object of known size instead, and checks it, which is "
+                        "the only way to know the millimetres are right on a "
+                        "panoramic image."
+                    ),
                     requirement="FR 007",
                 )
             )
@@ -228,11 +251,16 @@ class SubmissionValidator:
                     code="calibration_absent",
                     severity=severity,
                     message=(
-                        "No spatial calibration is available. Pixel measurements "
-                        "and dimensionless ratios are recorded; millimetre values "
-                        "are marked unavailable."
+                        "No spatial calibration is available, so millimetre "
+                        "values are marked unavailable. Pixel measurements and "
+                        "the dimensionless ratios are recorded." + consequence
                     ),
-                    remedy="Complete a manual calibration using a known length if millimetre values are required.",
+                    remedy=(
+                        "Annotate, Calibrate sets the scale from an object of "
+                        "known size and checks it against a second one. Needed "
+                        "only if the study reports millimetres: PMI is a ratio "
+                        "and does not depend on it."
+                    ),
                     requirement="FR 008",
                 )
             )
