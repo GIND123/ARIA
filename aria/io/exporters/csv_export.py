@@ -103,6 +103,12 @@ DATA_DICTIONARY = [
     ("calibration_scale", "measurements_long", "text", "", "The row and column spacing applied to this value, as text."),
     ("correction_factor", "measurements_long", "text", "", "Magnification correction applied to this value, or none."),
     ("millimetres_available", "measurements_long", "boolean", "", "True when this value could be expressed in millimetres."),
+    ("reference_set", "measurements_long", "text", "", "Which published reference set this row was compared against. Empty when the project chose none, in which case the value stands on its own."),
+    ("reference_population", "measurements_long", "text", "", "The population that reference set describes. Published means differ by population, so a comparison is only meaningful against a matching one."),
+    ("reference_mean", "measurements_long", "number", "", "Published mean for this index in that population."),
+    ("reference_sd", "measurements_long", "number", "", "Published standard deviation. Empty where the source quotes a mean without one, in which case no Z score is given."),
+    ("reference_z_score", "measurements_long", "number", "", "Standard deviations from the published mean. Negative means a thinner cortex than the reference, which is the direction of interest."),
+    ("below_reference", "measurements_long", "boolean", "", "True when the measured value is below the published mean."),
     ("aliases", "measurements_long", "text", "", "Accepted alternative names for the measure, separated by a vertical bar."),
     ("ratio_basis", "measurements_long", "text", "", "Whether a ratio was taken from millimetre or pixel distances."),
     ("warnings", "measurements_long", "text", "", "Notes attached to the value."),
@@ -415,6 +421,9 @@ def export_tables(
     directory.mkdir(parents=True, exist_ok=True)
     schema = schema or ProjectSchema()
     engine = MeasurementEngine(schema)
+    from ...core.references import get_reference_set
+
+    reference = get_reference_set(schema.reference_set) if schema.reference_set else None
 
     cases, long_rows, wide_rows = [], [], []
     labels, flags, annotations, omissions, textures = [], [], [], [], []
@@ -427,7 +436,7 @@ def export_tables(
         cases.append(case_row(data, project, annotator, reviewer))
 
         measurements = engine.compute(data) + engine.grades(data)
-        for row in measurements_to_rows(measurements):
+        for row in measurements_to_rows(measurements, reference):
             row["case_pseudonym"] = data.case.pseudonym
             long_rows.append(row)
 

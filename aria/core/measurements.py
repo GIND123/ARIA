@@ -606,12 +606,27 @@ def reproduce_from_export(geometry: dict, calibration: dict) -> list:
     return engine.compute(data) + engine.grades(data)
 
 
-def measurements_to_rows(measurements: list) -> list:
-    """Flatten measurements for tabular export (FR 049)."""
+def measurements_to_rows(measurements: list, reference_set=None) -> list:
+    """Flatten measurements for tabular export (FR 049).
+
+    ``reference_set`` is optional. Given one, each row also carries where the
+    value sits against that published distribution, along with which
+    distribution it was, because a Z score whose reference is not stated is not
+    interpretable.
+    """
+    from .references import compare_measurement
+
     rows: list = []
     for m in measurements:
+        comparison = compare_measurement(m, reference_set) if reference_set else {}
         rows.append(
             {
+                "reference_set": comparison.get("reference_set", ""),
+                "reference_population": comparison.get("population", ""),
+                "reference_mean": comparison.get("mean"),
+                "reference_sd": comparison.get("sd"),
+                "reference_z_score": comparison.get("z_score"),
+                "below_reference": comparison.get("below_reference"),
                 "measure": m.kind,
                 "measure_display": MeasurementKind(m.kind).display,
                 "aliases": "|".join(MeasurementKind(m.kind).aliases),

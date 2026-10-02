@@ -234,6 +234,27 @@ itself incomplete, and a form that refuses to save until every box is filled
 gets worked around rather than completed. Values that are not plausible are
 cleared with a note rather than stored.
 
+### Reading an index against a reference
+
+A mental index of 3.1 mm is neither low nor normal on its own. It means
+something once it is read against the distribution it came from, and those
+distributions differ: the published Indian means are consistently lower than
+the Western ones, so scoring an Indian patient against a Western reference
+finds low bone where there is none.
+
+ARIA holds several published sets, with their source and the population each
+describes, and applies none of them unless a project chooses one. When a set is
+chosen, every index in the export carries the mean, the standard deviation, the
+Z score and which set produced it, because a Z score whose reference is not
+stated cannot be interpreted. Where a source quotes a mean without its
+dispersion, ARIA compares against the mean and declines to invent a Z score.
+
+One rule does not depend on choosing a population: a mandibular cortex of three
+millimetres or less is the threshold the literature repeatedly puts forward for
+referring a patient for densitometry. ARIA says so when it sees one. That is a
+prompt to investigate, not a diagnosis, and it only means anything from a
+calibration that has been checked.
+
 **Nothing on this form identifies a patient.** There is no name, no date of
 birth and no free date of any kind. An age of ninety or above is recorded as
 ninety, because in a study of ordinary size a single patient of a hundred and
