@@ -126,8 +126,8 @@ MCI_DEFINITIONS = {
         "endosteal cortical residues."
     ),
     MCIGrade.NOT_ASSESSABLE: (
-        "The inferior cortex distal to the mental foramen cannot be assessed "
-        "on this image."
+        "The inferior cortex between the distal aspect of the mental foramen "
+        "and the antegonial region cannot be assessed on this image."
     ),
     MCIGrade.UNCERTAIN: (
         "The cortex is visible but the grade cannot be decided with "
@@ -488,7 +488,10 @@ LABEL_CLASSES: tuple[LabelClass, ...] = (
         glyph="▣",
         description=(
             "Region of inferior cortex distal to the mental foramen that the "
-            "Klemetti grade was assigned from."
+            "Klemetti grade was assigned from. The evaluation area runs from "
+            "the distal aspect of the mental foramen to the antegonial region, "
+            "so a grade read outside that band is not comparable with a "
+            "published one."
         ),
         required_by_default=True,
         depends_on=("mental_foramen_centre",),

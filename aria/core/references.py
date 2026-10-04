@@ -261,3 +261,129 @@ def compare_measurement(measurement, reference: ReferenceSet | None) -> dict:
             ),
         }
     return compare(index, float(value), reference)
+
+
+@dataclass(frozen=True)
+class Citation:
+    """Where a definition came from, in a form a reader can go and check."""
+
+    authors: str
+    title: str
+    journal: str
+    year: int
+    locator: str = ""
+    pmid: str = ""
+    doi: str = ""
+
+    def text(self) -> str:
+        parts = [f"{self.authors}. {self.title}. {self.journal}. {self.year}"]
+        if self.locator:
+            parts.append(f";{self.locator}")
+        tail = []
+        if self.doi:
+            tail.append(f"doi: {self.doi}")
+        if self.pmid:
+            tail.append(f"PMID: {self.pmid}")
+        line = "".join(parts)
+        return f"{line}. {' '.join(tail)}" if tail else f"{line}."
+
+
+HASTAR_2011 = Citation(
+    authors="Hastar E, Yilmaz HH, Orhan H",
+    title=(
+        "Evaluation of mental index, mandibular cortical index and panoramic "
+        "mandibular index on dental panoramic radiographs in the elderly"
+    ),
+    journal="Eur J Dent",
+    year=2011,
+    locator="5(1):60-7",
+    pmid="21228957",
+)
+
+PALASKAR_2023 = Citation(
+    authors="Palaskar JN, Ambildhok KA",
+    title=(
+        "Reference values of Orthopantomographic indices for early detection "
+        "of low bone mineral density in Indian population"
+    ),
+    journal="J Oral Biol Craniofac Res",
+    year=2023,
+    locator="13(2):150-154",
+    pmid="36618008",
+    doi="10.1016/j.jobcr.2022.12.009",
+)
+
+MUNHOZ_2021 = Citation(
+    authors="Munhoz L, Morita L, Nagai AY, Moreira J, Arita ES",
+    title=(
+        "Mandibular cortical index in the screening of postmenopausal at low "
+        "mineral density risk: a systematic review"
+    ),
+    journal="Dentomaxillofac Radiol",
+    year=2021,
+    locator="50(4):20200514",
+    pmid="33591840",
+    doi="10.1259/dmfr.20200514",
+)
+
+#: The definition each measurement is made to, and where that definition is
+#: published. An exported index whose definition is not stated cannot be
+#: compared with anybody else's: half the disagreement in this literature is
+#: two groups measuring different things under one name.
+DEFINITION_SOURCES = {
+    "mandibular_cortical_width": (
+        "Thickness of the inferior cortex measured on the perpendicular "
+        "through the mental foramen. Reported as Mandibular Cortical Width "
+        "and as Mental Index, which are the same measurement.",
+        (HASTAR_2011, PALASKAR_2023),
+    ),
+    "pmi_superior": (
+        "Cortical width divided by the distance from the superior border of "
+        "the mental foramen to the inferior border of the mandible.",
+        (HASTAR_2011, PALASKAR_2023),
+    ),
+    "pmi_inferior": (
+        "Cortical width divided by the distance from the inferior border of "
+        "the mental foramen to the inferior border of the mandible.",
+        (HASTAR_2011, PALASKAR_2023),
+    ),
+    "antegonial_index": (
+        "Cortical thickness at the antegonial region, the upward curvature of "
+        "the inferior border where the body of the mandible meets the ramus.",
+        (PALASKAR_2023,),
+    ),
+    "gonial_index": (
+        "Cortical thickness at the gonial angle, where the inferior border "
+        "turns upward into the posterior border of the ramus.",
+        (PALASKAR_2023,),
+    ),
+    "mci_grade": (
+        "Klemetti classification of the inferior cortex, graded between the "
+        "distal aspect of the mental foramen and the antegonial region. C1 "
+        "even and sharp, C2 lacunar resorption, C3 porous.",
+        (MUNHOZ_2021,),
+    ),
+}
+
+
+def definition_for(kind: str) -> dict:
+    """The definition a measurement was made to, with its sources."""
+    entry = DEFINITION_SOURCES.get(kind)
+    if entry is None:
+        return {"definition": "", "sources": []}
+    definition, citations = entry
+    return {
+        "definition": definition,
+        "sources": [c.text() for c in citations],
+    }
+
+
+def all_citations() -> list:
+    """Every source behind the definitions, once each, for a bundle to carry."""
+    seen, out = set(), []
+    for _definition, citations in DEFINITION_SOURCES.values():
+        for citation in citations:
+            if citation.pmid not in seen:
+                seen.add(citation.pmid)
+                out.append(citation)
+    return out

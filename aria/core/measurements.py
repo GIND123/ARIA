@@ -614,13 +614,16 @@ def measurements_to_rows(measurements: list, reference_set=None) -> list:
     distribution it was, because a Z score whose reference is not stated is not
     interpretable.
     """
-    from .references import compare_measurement
+    from .references import compare_measurement, definition_for
 
     rows: list = []
     for m in measurements:
         comparison = compare_measurement(m, reference_set) if reference_set else {}
+        source = definition_for(m.kind)
         rows.append(
             {
+                "definition": source["definition"],
+                "definition_source": " | ".join(source["sources"]),
                 "reference_set": comparison.get("reference_set", ""),
                 "reference_population": comparison.get("population", ""),
                 "reference_mean": comparison.get("mean"),

@@ -187,7 +187,19 @@ def build_annotation_set(repo, case, annotator, complete: bool = True):
         # Superior height 220 px, inferior height 180 px.
         add("pmi_superior_line", side, [(cx, y_peri - 220), (cx, y_peri)], "line")
         add("pmi_inferior_line", side, [(cx, y_peri - 180), (cx, y_peri)], "line")
-        add("mci_region", side, [(cx - 120, y_endo - 10), (cx - 20, y_peri + 10)], "box")
+        # Distal to the mental foramen, which is away from the midline and
+        # therefore in opposite directions on the two sides. Subtracting on
+        # both put the left region between the foramen and the midline, which
+        # is not where the Klemetti grade is read from.
+        distal = -1.0 if side is Side.RIGHT else 1.0
+        add(
+            "mci_region", side,
+            [
+                (cx + distal * 120, y_endo - 10),
+                (cx + distal * 20, y_peri + 10),
+            ],
+            "box",
+        )
         add("antegonial_point", side, [(width * (0.21 if side is Side.RIGHT else 0.79), y_peri)], "point")
         ax = width * (0.21 if side is Side.RIGHT else 0.79)
         add("antegonial_index_line", side, [(ax, y_peri), (ax, y_peri - 35)], "line")

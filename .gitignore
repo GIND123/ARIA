@@ -31,3 +31,7 @@ Thumbs.db
 
 # Never publish unsanitised source images.
 *.original
+
+# Client supplied documents live here while they are being worked from, but
+# this repository is public, so they are not published with it.
+Indices.docx

@@ -234,6 +234,28 @@ itself incomplete, and a form that refuses to save until every box is filled
 gets worked around rather than completed. Values that are not plausible are
 cleared with a note rather than stored.
 
+### Where each index is measured
+
+| Index | What it measures |
+| --- | --- |
+| MCW, also published as MI | Thickness of the inferior cortex on the perpendicular through the mental foramen |
+| PMI superior | Cortical width divided by the distance from the **superior** border of the foramen to the inferior border of the mandible |
+| PMI inferior | Cortical width divided by the distance from the **inferior** border of the foramen to the inferior border of the mandible |
+| AI | Cortical thickness at the antegonial region, where the body of the mandible meets the ramus |
+| GI | Cortical thickness at the gonial angle |
+| MCI, Klemetti | C1 even and sharp, C2 lacunar resorption, C3 porous |
+
+The Klemetti grade is read from a specific band: **from the distal aspect of
+the mental foramen to the antegonial region**. ARIA says so when a grading
+region is drawn outside it, because a grade read from the symphysis is a grade
+of different bone and cannot be compared with a published figure. It is a
+warning rather than a refusal, and the case still submits.
+
+Every measurement row in the export carries the definition it was made to and
+the paper that definition comes from, with its PMID. Half the disagreement in
+this literature is two groups measuring different things under one name, so the
+definition travels with the number.
+
 ### Reading an index against a reference
 
 A mental index of 3.1 mm is neither low nor normal on its own. It means

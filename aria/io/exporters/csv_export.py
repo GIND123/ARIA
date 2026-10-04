@@ -103,6 +103,8 @@ DATA_DICTIONARY = [
     ("calibration_scale", "measurements_long", "text", "", "The row and column spacing applied to this value, as text."),
     ("correction_factor", "measurements_long", "text", "", "Magnification correction applied to this value, or none."),
     ("millimetres_available", "measurements_long", "boolean", "", "True when this value could be expressed in millimetres."),
+    ("definition", "measurements_long", "text", "", "What this measurement is, in words. Half the disagreement in this literature is two groups measuring different things under one name, so the definition travels with the number."),
+    ("definition_source", "measurements_long", "text", "", "Published source of that definition, with its PMID, so a reader can check what was measured rather than assume."),
     ("reference_set", "measurements_long", "text", "", "Which published reference set this row was compared against. Empty when the project chose none, in which case the value stands on its own."),
     ("reference_population", "measurements_long", "text", "", "The population that reference set describes. Published means differ by population, so a comparison is only meaningful against a matching one."),
     ("reference_mean", "measurements_long", "number", "", "Published mean for this index in that population."),

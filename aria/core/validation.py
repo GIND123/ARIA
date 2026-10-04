@@ -265,6 +265,73 @@ class SubmissionValidator:
                 )
             )
 
+    def _check_mci_region_placement(self, data, side, result: ValidationResult) -> None:
+        """The grade has to be read from the band the classification defines.
+
+        The Klemetti evaluation area runs from the distal aspect of the mental
+        foramen to the antegonial region. A grade read from the symphysis, or
+        from behind the antegonial notch, is a grade of a different piece of
+        bone, and comparing it with a published figure compares two different
+        things. Both landmarks have to be present to say anything, so where
+        either is missing this stays quiet rather than guessing.
+        """
+        region = data.present("mci_region", side)
+        foramen = data.present("mental_foramen_centre", side)
+        antegonial = data.present("antegonial_point", side)
+        if region is None or foramen is None or antegonial is None:
+            return
+
+        region_points = region.points()
+        foramen_points = foramen.points()
+        antegonial_points = antegonial.points()
+        if not region_points or not foramen_points or not antegonial_points:
+            return
+
+        xs = [p[0] for p in region_points]
+        centre = sum(xs) / len(xs)
+        foramen_x = foramen_points[0][0]
+        antegonial_x = antegonial_points[0][0]
+        span = antegonial_x - foramen_x
+        if abs(span) < 1e-6:
+            return
+
+        # Measured along the band itself rather than against the smaller and
+        # larger coordinate, so the same arithmetic reads correctly on both
+        # sides: patient right runs one way across the image and patient left
+        # the other. Nought is the foramen, one is the antegonial point.
+        position = (centre - foramen_x) / span
+
+        # A little slack, because the region is drawn by hand and an edge
+        # sitting a hair past a landmark is not a different piece of bone.
+        slack = 0.05
+        if -slack <= position <= 1.0 + slack:
+            return
+
+        beyond = (
+            "between the mental foramen and the midline"
+            if position < 0 else
+            "past the antegonial region"
+        )
+        result.add(
+            Issue(
+                code="mci_region_outside_evaluation_area",
+                severity=Severity.WARNING.value,
+                message=(
+                    f"The grading region on the {side.display.lower()} side "
+                    f"sits {beyond}, outside the band the Klemetti "
+                    f"classification is defined on."
+                ),
+                remedy=(
+                    "Move the region onto the inferior cortex between the "
+                    "distal aspect of the mental foramen and the antegonial "
+                    "region. A grade read elsewhere cannot be compared with a "
+                    "published one."
+                ),
+                class_key="mci_region", side=side.value,
+                requirement="FR 027",
+            )
+        )
+
     def _check_required_labels(self, data, result: ValidationResult) -> None:
         for key in self.schema.required_classes:
             if key in self.schema.allowed_omissions:
@@ -478,6 +545,7 @@ class SubmissionValidator:
                             requirement="FR 027",
                         )
                     )
+                self._check_mci_region_placement(data, side, result)
             if label.grade is MCIGrade.UNCERTAIN and not label.rationale:
                 result.add(
                     Issue(
