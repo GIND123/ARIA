@@ -851,6 +851,19 @@ class Controller(QObject):
         )
         return True
 
+    def set_reference_outcome(self, case_id: str, outcome) -> bool:
+        """Record the reference examination this case would be trained against."""
+        if not self._guard_editable():
+            return False
+        self.repo.set_reference_outcome(case_id, outcome)
+        if self.case_data is not None and self.case_data.case.id == case_id:
+            self.case_data.case.reference = outcome
+            self.case_opened.emit(self.case_data)
+        self.status_message.emit(
+            f"Reference outcome saved. {outcome.summary_line()}", 6000
+        )
+        return True
+
     def confirm_laterality(self, note: str = "") -> bool:
         if self.case_data is None:
             return False

@@ -143,6 +143,7 @@ def annotation_to_dict(annotation) -> dict:
         "presence": annotation.presence,
         "properties": dict(annotation.properties),
         "visibility_score": annotation.visibility_score,
+        "confidence": annotation.confidence,
         "ambiguous": annotation.ambiguous,
         "locked": annotation.locked,
         "created_at": annotation.created_at,

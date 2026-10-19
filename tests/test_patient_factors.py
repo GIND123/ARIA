@@ -38,7 +38,7 @@ class TestWhatIsRecorded:
         factors = PatientFactors(
             age_years=67, sex=Sex.FEMALE.value,
             menopausal_status=MenopausalStatus.POSTMENOPAUSAL.value,
-            height_cm=158.0, weight_kg=54.0, dxa_t_score=-2.9,
+            height_cm=158.0, weight_kg=54.0,
         )
         line = factors.summary_line()
 
@@ -46,7 +46,6 @@ class TestWhatIsRecorded:
         assert "Female" in line
         assert "postmenopausal" in line
         assert "BMI" in line
-        assert "-2.9" in line
 
     def test_body_mass_index_is_computed(self):
         factors = PatientFactors(height_cm=170.0, weight_kg=72.0)
@@ -128,7 +127,6 @@ class TestImplausibleEntriesAreClearedRatherThanStored:
     @pytest.mark.parametrize("field,value", [
         ("height_cm", 900.0), ("height_cm", 3.0),
         ("weight_kg", 900.0), ("weight_kg", 2.0),
-        ("dxa_t_score", -20.0), ("dxa_t_score", 40.0),
     ])
     def test_an_implausible_measurement_is_cleared_with_a_note(self, field, value):
         factors = PatientFactors(**{field: value})
@@ -140,7 +138,7 @@ class TestImplausibleEntriesAreClearedRatherThanStored:
     def test_normalising_never_raises(self):
         """A form that will not save gets worked around, not corrected."""
         PatientFactors(
-            age_years=-5, height_cm=0.1, weight_kg=9999.0, dxa_t_score=99.0,
+            age_years=-5, height_cm=0.1, weight_kg=9999.0,
             sex="nonsense", menopausal_status="nonsense",
         ).normalise()
 
@@ -172,7 +170,6 @@ class TestTheSheetSurvivesBeingStored:
             height_cm=158.0, weight_kg=54.0,
             smoking_status=SmokingStatus.FORMER.value,
             bone_status=BoneStatus.OSTEOPOROSIS.value,
-            dxa_t_score=-2.9, dxa_site="femoral neck",
             medication=BoneMedication.BISPHOSPHONATE.value,
             notes="Referred from the fracture clinic.",
         )
@@ -211,8 +208,7 @@ class TestTheFactorsReachTheExport:
         factors = PatientFactors(
             age_years=67, sex=Sex.FEMALE.value,
             menopausal_status=MenopausalStatus.POSTMENOPAUSAL.value,
-            height_cm=158.0, weight_kg=54.0, dxa_t_score=-2.9,
-            dxa_site="femoral neck",
+            height_cm=158.0, weight_kg=54.0,
         )
         factors.normalise()
         repo.set_patient_factors(calibrated_case.id, factors)
@@ -224,8 +220,6 @@ class TestTheFactorsReachTheExport:
         assert row["patient_sex"] == "female"
         assert row["patient_menopausal_status"] == "postmenopausal"
         assert row["patient_bmi"] == pytest.approx(21.63, abs=0.01)
-        assert row["patient_dxa_t_score"] == pytest.approx(-2.9)
-        assert row["patient_dxa_site"] == "femoral neck"
 
     def test_every_factor_column_is_documented(self):
         """An exported number nobody can interpret is not evidence (FR 049)."""
@@ -256,7 +250,7 @@ class TestTheFactorsReachTheExport:
 
         assert row["patient_age_years"] is None
         assert row["patient_bmi"] is None
-        assert row["patient_dxa_t_score"] is None
+        assert row["reference_t_score"] is None
 
 
 class TestFreeTextIsScannedBeforeItLeaves:
@@ -322,8 +316,7 @@ class TestFreeTextIsScannedBeforeItLeaves:
         factors = PatientFactors(
             age_years=67, sex=Sex.FEMALE.value,
             menopausal_status=MenopausalStatus.POSTMENOPAUSAL.value,
-            height_cm=158.0, weight_kg=54.0, dxa_t_score=-2.9,
-            dxa_site="femoral neck",
+            height_cm=158.0, weight_kg=54.0,
             smoking_status=SmokingStatus.FORMER.value,
             bone_status=BoneStatus.OSTEOPOROSIS.value,
             medication=BoneMedication.BISPHOSPHONATE.value,

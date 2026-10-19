@@ -132,6 +132,172 @@ class BoneMedication(str, Enum):
         }[self]
 
 
+class ReferenceModality(str, Enum):
+    """How the reference outcome was obtained.
+
+    An OPG does not measure bone mineral density. Any claim that it predicts
+    one rests entirely on what it was trained against, so the reference has to
+    say what it is.
+    """
+
+    NONE = "none"
+    DXA = "dxa"
+    QCT = "quantitative_ct"
+    MICRO_CT = "micro_ct"
+    ULTRASOUND = "quantitative_ultrasound"
+    OTHER = "other"
+
+    @property
+    def display(self) -> str:
+        return {
+            ReferenceModality.NONE: "None",
+            ReferenceModality.DXA: "DXA",
+            ReferenceModality.QCT: "Quantitative CT",
+            ReferenceModality.MICRO_CT: "Micro CT",
+            ReferenceModality.ULTRASOUND: "Quantitative ultrasound",
+            ReferenceModality.OTHER: "Other",
+        }[self]
+
+
+class ReferenceQuality(str, Enum):
+    """Whether the reference is fit to be trained against."""
+
+    UNKNOWN = "unknown"
+    ACCEPTABLE = "acceptable"
+    QUESTIONABLE = "questionable"
+    UNUSABLE = "unusable"
+
+    @property
+    def display(self) -> str:
+        return {
+            ReferenceQuality.UNKNOWN: "Not assessed",
+            ReferenceQuality.ACCEPTABLE: "Acceptable",
+            ReferenceQuality.QUESTIONABLE: "Questionable",
+            ReferenceQuality.UNUSABLE: "Unusable",
+        }[self]
+
+
+#: Beyond this many days between the radiograph and the reference examination,
+#: the two are describing different skeletons. The figure is a default for a
+#: project to override, not a clinical rule.
+DEFAULT_REFERENCE_WINDOW_DAYS = 365
+
+
+@dataclass
+class ReferenceOutcome:
+    """The measured truth an OPG derived estimate would be trained against.
+
+    Held apart from the radiographic findings on purpose. A radiograph and a
+    densitometry result are two different examinations of one patient, and a
+    dataset that cannot say which modality, which site, which device and how
+    far apart in time cannot be used to train a bone density model honestly.
+
+    No date is stored, only the interval in days, because a pair of dates
+    narrows a patient down and the interval is what the analysis needs.
+    """
+
+    modality: str = ReferenceModality.NONE.value
+    #: Where it was measured: femoral neck, lumbar spine, total hip, and so on.
+    site: str = ""
+    t_score: float | None = None
+    z_score: float | None = None
+    #: Areal or volumetric density, with its unit stated rather than assumed.
+    bmd_value: float | None = None
+    bmd_unit: str = ""
+    #: Days between the radiograph and the reference examination. Negative
+    #: means the reference came first.
+    days_from_image: int | None = None
+    device: str = ""
+    #: Who or what produced it, as a source rather than a person: a hospital
+    #: department, a study arm, a registry.
+    source: str = ""
+    quality: str = ReferenceQuality.UNKNOWN.value
+    notes: str = ""
+
+    @property
+    def modality_enum(self) -> ReferenceModality:
+        try:
+            return ReferenceModality(self.modality)
+        except ValueError:
+            return ReferenceModality.NONE
+
+    @property
+    def is_recorded(self) -> bool:
+        return self != ReferenceOutcome()
+
+    def usable_as_target(self, window_days: int = DEFAULT_REFERENCE_WINDOW_DAYS) -> tuple:
+        """Whether this may be treated as a labelled target, and why not.
+
+        FR 066: a record without an adequate reference outcome may still be
+        used for annotation training, but must not be treated as a labelled
+        bone density target. The decision belongs to whoever assembles the
+        dataset, so the reasons are returned rather than acted on.
+        """
+        reasons: list = []
+        if self.modality_enum is ReferenceModality.NONE:
+            reasons.append("No reference modality is recorded.")
+        if not self.site:
+            reasons.append("No anatomical site is recorded for the reference.")
+        if self.t_score is None and self.z_score is None and self.bmd_value is None:
+            reasons.append("The reference carries no value.")
+        if self.bmd_value is not None and not self.bmd_unit:
+            reasons.append(
+                "A density value is recorded without its unit, so it cannot be "
+                "compared with anything."
+            )
+        if self.quality in (
+            ReferenceQuality.QUESTIONABLE.value, ReferenceQuality.UNUSABLE.value,
+        ):
+            reasons.append(
+                f"The reference is marked {ReferenceQuality(self.quality).display.lower()}."
+            )
+        if self.days_from_image is None:
+            reasons.append(
+                "The interval between the radiograph and the reference "
+                "examination is not recorded."
+            )
+        elif abs(int(self.days_from_image)) > window_days:
+            reasons.append(
+                f"The reference was taken {abs(int(self.days_from_image))} days "
+                f"from the radiograph, beyond the {window_days} day window, so "
+                f"the two may describe different skeletons."
+            )
+        return (not reasons, reasons)
+
+    def summary_line(self) -> str:
+        if not self.is_recorded:
+            return "No reference outcome recorded."
+        parts = [self.modality_enum.display]
+        if self.site:
+            parts.append(self.site)
+        if self.t_score is not None:
+            parts.append(f"T {self.t_score:+g}")
+        if self.z_score is not None:
+            parts.append(f"Z {self.z_score:+g}")
+        if self.bmd_value is not None:
+            parts.append(f"{self.bmd_value:g} {self.bmd_unit}".strip())
+        if self.days_from_image is not None:
+            parts.append(f"{self.days_from_image:+d} days from the image")
+        return ", ".join(parts) + "."
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        usable, reasons = self.usable_as_target()
+        d["usable_as_target"] = usable
+        d["not_usable_because"] = reasons
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "ReferenceOutcome":
+        if not data:
+            return cls()
+        data = dict(data)
+        for derived in ("usable_as_target", "not_usable_because"):
+            data.pop(derived, None)
+        allowed = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in data.items() if k in allowed})
+
+
 @dataclass
 class PatientFactors:
     """Everything recorded about the patient, and nothing that identifies them."""
@@ -143,10 +309,6 @@ class PatientFactors:
     weight_kg: float | None = None
     smoking_status: str = SmokingStatus.UNKNOWN.value
     bone_status: str = BoneStatus.UNKNOWN.value
-    #: Lowest T score from densitometry, with the site it was measured at.
-    #: This is the reference standard a radiographic index is compared against.
-    dxa_t_score: float | None = None
-    dxa_site: str = ""
     medication: str = BoneMedication.UNKNOWN.value
     notes: str = ""
 
@@ -193,8 +355,6 @@ class PatientFactors:
                 parts.append(status.display.lower())
         if self.bmi is not None:
             parts.append(f"BMI {self.bmi:g}")
-        if self.dxa_t_score is not None:
-            parts.append(f"T score {self.dxa_t_score:+g}")
         return ", ".join(parts) + "."
 
     # -- validation ----------------------------------------------------------
@@ -239,7 +399,6 @@ class PatientFactors:
         for name, low, high in (
             ("height_cm", 50.0, 250.0),
             ("weight_kg", 10.0, 400.0),
-            ("dxa_t_score", -8.0, 6.0),
         ):
             value = getattr(self, name)
             if value is None:

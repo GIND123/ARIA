@@ -950,13 +950,34 @@ class TestBundle:
 
 class TestQualityFlags:
     def test_all_flags_are_available(self):
+        """The vocabulary the downstream measurement system expects (FR 027).
+
+        Written as the full set rather than a subset, so that dropping one
+        fails here rather than silently leaving an annotator with nowhere to
+        record it.
+        """
         from aria.core.schema import QualityFlag
 
         expected = {
-            "not_visible", "ambiguous", "anatomical_variant", "artefact",
-            "cropped_anatomy", "poor_positioning", "motion", "other",
+            "not_visible", "ambiguous", "multiple_foramina",
+            "anatomical_variant", "artefact", "metal_artefact",
+            "exposure_problem", "cropped_anatomy", "poor_positioning",
+            "motion", "pathology_affecting_measurement", "other",
         }
         assert {f.value for f in QualityFlag} == expected
+
+    def test_the_flags_the_downstream_system_names_are_all_present(self):
+        """Checked by the wording the specification uses, because that is what
+        a reader of the export will be looking for."""
+        from aria.core.schema import QualityFlag
+
+        required = {
+            "Not visible", "Ambiguous", "Multiple foramina",
+            "Anatomical variant", "Cropped anatomy", "Positioning error",
+            "Motion", "Metal artefact", "Exposure problem",
+            "Pathology affecting measurement", "Other",
+        }
+        assert required <= {f.display for f in QualityFlag}
 
     def test_other_requires_a_comment(self, repo, calibrated_case, annotator, schema):
         from aria.core.models import QualityFlagRecord

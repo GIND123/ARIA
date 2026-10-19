@@ -193,6 +193,14 @@ def read_dicom(path, device_policy: dict | None = None) -> ImageData:
     except AttributeError:
         meta.transfer_syntax_uid = ""
 
+    # Read before anything is written down, and handed to the importer to be
+    # hashed. A patient identifier is the only thing in the file that says two
+    # radiographs belong to one person, and once deidentification has run there
+    # is no way to recover the grouping.
+    patient_identifier = str(getattr(ds, "PatientID", "") or "")
+    study = str(getattr(ds, "StudyInstanceUID", "") or "")
+    grouping_identifier = patient_identifier or study
+
     raw = ds.pixel_array
     normalised = normalise_stored_pixels(raw, ds)
 
@@ -205,7 +213,10 @@ def read_dicom(path, device_policy: dict | None = None) -> ImageData:
             f"{normalised.shape[2]} channels, preserved in the retained source file"
         )
 
-    image = ImageData(pixels=normalised, meta=meta, original_channels=original_channels)
+    image = ImageData(
+        pixels=normalised, meta=meta, original_channels=original_channels,
+        grouping_identifier=grouping_identifier,
+    )
 
     # A presentation LUT shape of INVERSE means the displayed polarity is the
     # opposite of the photometric interpretation.

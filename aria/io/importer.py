@@ -251,6 +251,19 @@ class Importer:
             case_pseudonym = pseudonym or pseudonym_for(source_identifier, self.salt)
             case_pseudonym = self._unique_pseudonym(project_id, case_pseudonym)
 
+            # The group that makes a split patient independent. Derived from
+            # the source patient identifier and stored only as a salted digest,
+            # so two radiographs of one person can be kept on the same side of
+            # a split without the dataset carrying anything that names them.
+            # With no identifier to group on, the case becomes its own group:
+            # treating an unknown as its own patient can only split a patient's
+            # images apart, which is a smaller error than merging two patients.
+            grouping = getattr(image, "grouping_identifier", "") or ""
+            patient_group = (
+                pseudonym_for(grouping, self.salt, prefix="PT")
+                if grouping else f"PT-{case_pseudonym}"
+            )
+
             case = Case(
                 project_id=project_id,
                 pseudonym=case_pseudonym,
@@ -258,6 +271,7 @@ class Importer:
                 calibration=calibration,
                 state=CaseState.UNASSIGNED.value,
                 split=split,
+                patient_group=patient_group,
                 imported_by=imported_by,
             )
 

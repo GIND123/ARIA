@@ -141,11 +141,23 @@ class QualityFlag(str, Enum):
 
     NOT_VISIBLE = "not_visible"
     AMBIGUOUS = "ambiguous"
+    #: An accessory mental foramen changes where the cortical width is
+    #: measured, so it is recorded rather than left for a reader to infer from
+    #: a landmark that looks misplaced.
+    MULTIPLE_FORAMINA = "multiple_foramina"
     ANATOMICAL_VARIANT = "anatomical_variant"
     ARTEFACT = "artefact"
+    #: Kept apart from artefact in general, because a restoration or an
+    #: appliance over the measurement site is the common reason a cortex cannot
+    #: be read, and a model trained on those images learns the metal.
+    METAL_ARTEFACT = "metal_artefact"
+    EXPOSURE_PROBLEM = "exposure_problem"
     CROPPED_ANATOMY = "cropped_anatomy"
     POOR_POSITIONING = "poor_positioning"
     MOTION = "motion"
+    #: Disease that changes the bone being measured, which is different from an
+    #: image that is merely hard to read.
+    PATHOLOGY_AFFECTING_MEASUREMENT = "pathology_affecting_measurement"
     OTHER = "other"
 
     @property
@@ -156,11 +168,15 @@ class QualityFlag(str, Enum):
 QUALITY_FLAG_LABELS = {
     QualityFlag.NOT_VISIBLE: "Not visible",
     QualityFlag.AMBIGUOUS: "Ambiguous",
+    QualityFlag.MULTIPLE_FORAMINA: "Multiple foramina",
     QualityFlag.ANATOMICAL_VARIANT: "Anatomical variant",
     QualityFlag.ARTEFACT: "Artefact",
+    QualityFlag.METAL_ARTEFACT: "Metal artefact",
+    QualityFlag.EXPOSURE_PROBLEM: "Exposure problem",
     QualityFlag.CROPPED_ANATOMY: "Cropped anatomy",
-    QualityFlag.POOR_POSITIONING: "Poor positioning",
+    QualityFlag.POOR_POSITIONING: "Positioning error",
     QualityFlag.MOTION: "Motion",
+    QualityFlag.PATHOLOGY_AFFECTING_MEASUREMENT: "Pathology affecting measurement",
     QualityFlag.OTHER: "Other",
 }
 

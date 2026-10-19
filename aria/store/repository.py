@@ -39,7 +39,7 @@ from ..core.models import (
     utc_now,
 )
 from ..core.schema import CaseState, STATE_TRANSITIONS, Side
-from ..core.patient import PatientFactors
+from ..core.patient import PatientFactors, ReferenceOutcome
 from ..core.units import Calibration
 from .db import Database
 
@@ -386,19 +386,22 @@ class Repository:
         with self.db.transaction() as c:
             c.execute(
                 "INSERT INTO cases (id, project_id, pseudonym, source_json,"
-                " calibration_json, patient_json,"
+                " calibration_json, patient_json, reference_json,"
                 " display_settings_json, deid_report_json, state,"
                 " assigned_to, laterality_confirmed, laterality_confirmed_by,"
-                " laterality_confirmed_at, laterality_note, split, imported_by,"
+                " laterality_confirmed_at, laterality_note, split, patient_group,"
+                " imported_by,"
                 " imported_at, duplicate_target, archived, source_sha256)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     case.id, case.project_id, case.pseudonym,
                     _json(case.source.to_dict()), _json(case.calibration.to_dict()),
                     _json(case.patient.to_dict()),
+                    _json(case.reference.to_dict()),
                     "{}", _json(deid_report or {}), case.state, case.assigned_to,
                     int(case.laterality_confirmed), case.laterality_confirmed_by,
                     case.laterality_confirmed_at, case.laterality_note, case.split,
+                    case.patient_group,
                     case.imported_by, case.imported_at, int(case.duplicate_target),
                     int(case.archived), case.source.sha256,
                 ),
@@ -560,6 +563,115 @@ class Repository:
                 project_id=case.project_id, case_id=case_id, conn=c,
             )
 
+    def split_leakage(self, project_id: str = "") -> list:
+        """Patient groups whose images sit in more than one dataset split.
+
+        This is the check that decides whether a dataset can be trained on
+        honestly. Two radiographs of one patient either side of a split let a
+        model learn the patient rather than the disease, and every number
+        measured on the test set afterwards is optimistic. It cannot be
+        repaired after the fact unless the grouping was captured at import,
+        which is why it is captured at import.
+
+        Cases with no split assigned are ignored: an unassigned case is not yet
+        in any split, so it cannot be in two.
+        """
+        sql = (
+            "SELECT patient_group, split, COUNT(*) AS n FROM cases"
+            " WHERE archived = 0 AND patient_group != '' AND split != ''"
+        )
+        params: tuple = ()
+        if project_id:
+            sql += " AND project_id = ?"
+            params = (project_id,)
+        sql += " GROUP BY patient_group, split ORDER BY patient_group, split"
+
+        by_group: dict = {}
+        for row in self.db.query(sql, params):
+            by_group.setdefault(row["patient_group"], []).append(
+                {"split": row["split"], "n_cases": row["n"]}
+            )
+        return [
+            {
+                "patient_group": group,
+                "splits": splits,
+                "n_cases": sum(s["n_cases"] for s in splits),
+            }
+            for group, splits in by_group.items()
+            if len(splits) > 1
+        ]
+
+    def split_summary(self, project_id: str = "") -> dict:
+        """Counts a dataset release has to state, and whether it leaks."""
+        leaks = self.split_leakage(project_id)
+        sql = (
+            "SELECT split, COUNT(*) AS n_cases,"
+            " COUNT(DISTINCT patient_group) AS n_groups"
+            " FROM cases WHERE archived = 0"
+        )
+        params: tuple = ()
+        if project_id:
+            sql += " AND project_id = ?"
+            params = (project_id,)
+        sql += " GROUP BY split ORDER BY split"
+
+        splits = [
+            {
+                "split": row["split"] or "unassigned",
+                "n_cases": row["n_cases"],
+                "n_patients": row["n_groups"],
+            }
+            for row in self.db.query(sql, params)
+        ]
+        return {
+            "splits": splits,
+            "patient_independent": not leaks,
+            "leaking_groups": leaks,
+            "n_leaking_groups": len(leaks),
+        }
+
+    def set_patient_group(self, case_id: str, group: str, detail: str = "") -> None:
+        """Move a case into a patient group by hand.
+
+        Needed for images that arrive without a patient identifier, a PNG
+        export among them, where the only person who knows that two
+        radiographs are of one patient is the one holding the referral.
+        """
+        case = self.get_case(case_id)
+        if case is None:
+            raise KeyError(f"No case with identifier {case_id}")
+        before = {"patient_group": case.patient_group}
+        with self.db.transaction() as c:
+            c.execute(
+                "UPDATE cases SET patient_group = ? WHERE id = ?", (group, case_id)
+            )
+            self.log(
+                AuditEvent.CASE_UPDATED if hasattr(AuditEvent, "CASE_UPDATED")
+                else AuditEvent.PATIENT_FACTORS_RECORDED,
+                "case", case_id, before=before,
+                after={"patient_group": group},
+                detail=detail or f"Patient group set to {group}.",
+                project_id=case.project_id, case_id=case_id, conn=c,
+            )
+
+    def set_reference_outcome(self, case_id: str, outcome, detail: str = "") -> None:
+        """Record the measured truth this case would be trained against."""
+        case = self.get_case(case_id)
+        if case is None:
+            raise KeyError(f"No case with identifier {case_id}")
+        before = case.reference.to_dict()
+        with self.db.transaction() as c:
+            c.execute(
+                "UPDATE cases SET reference_json = ? WHERE id = ?",
+                (_json(outcome.to_dict()), case_id),
+            )
+            self.log(
+                AuditEvent.PATIENT_FACTORS_RECORDED, "case", case_id,
+                before=before, after=outcome.to_dict(),
+                detail=detail or f"Reference outcome: {outcome.summary_line()}",
+                project_id=case.project_id, case_id=case_id, conn=c,
+            )
+
     def set_patient_factors(
         self, case_id: str, factors: PatientFactors, detail: str = ""
     ) -> None:
@@ -635,11 +747,18 @@ class Repository:
             patient=PatientFactors.from_dict(
                 _loads(row["patient_json"], {}) if "patient_json" in row.keys() else {}
             ),
+            reference=ReferenceOutcome.from_dict(
+                _loads(row["reference_json"], {})
+                if "reference_json" in row.keys() else {}
+            ),
             state=row["state"], assigned_to=row["assigned_to"],
             laterality_confirmed=bool(row["laterality_confirmed"]),
             laterality_confirmed_by=row["laterality_confirmed_by"],
             laterality_confirmed_at=row["laterality_confirmed_at"],
             laterality_note=row["laterality_note"], split=row["split"],
+            patient_group=(
+                row["patient_group"] if "patient_group" in row.keys() else ""
+            ),
             imported_by=row["imported_by"], imported_at=row["imported_at"],
             duplicate_target=bool(row["duplicate_target"]),
             archived=bool(row["archived"]),
@@ -736,15 +855,17 @@ class Repository:
             c.execute(
                 "INSERT INTO annotations (id, set_id, class_key, side, geometry_type,"
                 " coordinates_json, mask_rle, mask_bbox_json, presence, properties_json,"
-                " visibility_score, ambiguous, locked, hidden, created_by, created_at,"
+                " visibility_score, confidence, ambiguous, locked, hidden,"
+                " created_by, created_at,"
                 " updated_by, updated_at, revision, deleted, notes)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(id) DO UPDATE SET class_key=excluded.class_key,"
                 " side=excluded.side, geometry_type=excluded.geometry_type,"
                 " coordinates_json=excluded.coordinates_json, mask_rle=excluded.mask_rle,"
                 " mask_bbox_json=excluded.mask_bbox_json, presence=excluded.presence,"
                 " properties_json=excluded.properties_json,"
                 " visibility_score=excluded.visibility_score,"
+                " confidence=excluded.confidence,"
                 " ambiguous=excluded.ambiguous, locked=excluded.locked,"
                 " hidden=excluded.hidden, updated_by=excluded.updated_by,"
                 " updated_at=excluded.updated_at, revision=excluded.revision,"
@@ -755,6 +876,7 @@ class Repository:
                     _json(annotation.coordinates), annotation.mask_rle,
                     _json(annotation.mask_bbox), annotation.presence,
                     _json(annotation.properties), annotation.visibility_score,
+                    annotation.confidence,
                     int(annotation.ambiguous), int(annotation.locked),
                     int(annotation.hidden), annotation.created_by or self._actor_id,
                     annotation.created_at, annotation.updated_by, annotation.updated_at,
@@ -797,15 +919,17 @@ class Repository:
                 c.execute(
                     "INSERT INTO annotations (id, set_id, class_key, side, geometry_type,"
                     " coordinates_json, mask_rle, mask_bbox_json, presence, properties_json,"
-                    " visibility_score, ambiguous, locked, hidden, created_by, created_at,"
+                    " visibility_score, confidence, ambiguous, locked, hidden,"
+                    " created_by, created_at,"
                     " updated_by, updated_at, revision, deleted, notes)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                     " ON CONFLICT(id) DO UPDATE SET class_key=excluded.class_key,"
                     " side=excluded.side, geometry_type=excluded.geometry_type,"
                     " coordinates_json=excluded.coordinates_json, mask_rle=excluded.mask_rle,"
                     " mask_bbox_json=excluded.mask_bbox_json, presence=excluded.presence,"
                     " properties_json=excluded.properties_json,"
                     " visibility_score=excluded.visibility_score,"
+                " confidence=excluded.confidence,"
                     " ambiguous=excluded.ambiguous, locked=excluded.locked,"
                     " hidden=excluded.hidden, updated_by=excluded.updated_by,"
                     " updated_at=excluded.updated_at, revision=excluded.revision,"
@@ -816,6 +940,7 @@ class Repository:
                         _json(annotation.coordinates), annotation.mask_rle,
                         _json(annotation.mask_bbox), annotation.presence,
                         _json(annotation.properties), annotation.visibility_score,
+                    annotation.confidence,
                         int(annotation.ambiguous), int(annotation.locked),
                         int(annotation.hidden), annotation.created_by or self._actor_id,
                         annotation.created_at, annotation.updated_by,
@@ -937,7 +1062,11 @@ class Repository:
             coordinates=_loads(row["coordinates_json"], []),
             mask_rle=row["mask_rle"], mask_bbox=_loads(row["mask_bbox_json"], []),
             presence=row["presence"], properties=_loads(row["properties_json"], {}),
-            visibility_score=row["visibility_score"], ambiguous=bool(row["ambiguous"]),
+            visibility_score=row["visibility_score"],
+            confidence=(
+                row["confidence"] if "confidence" in row.keys() else None
+            ),
+            ambiguous=bool(row["ambiguous"]),
             locked=bool(row["locked"]), hidden=bool(row["hidden"]),
             created_by=row["created_by"], created_at=row["created_at"],
             updated_by=row["updated_by"], updated_at=row["updated_at"],

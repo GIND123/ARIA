@@ -67,6 +67,13 @@ class ImageData:
     #: Original colour channels when the source carried them. Kept so the
     #: conversion to grayscale stays display only (FR 006).
     original_channels: np.ndarray | None = None
+    #: The source identifier that groups a patient's images, carried from the
+    #: reader to the importer and never stored. The importer turns it into a
+    #: salted digest; this field holds the identifier itself for the few
+    #: milliseconds between reading the file and hashing it, which is the only
+    #: way to group two radiographs of one patient after deidentification has
+    #: removed every means of recognising them.
+    grouping_identifier: str = ""
     #: Cache of the modality value array, computed on first use.
     _modality_cache: np.ndarray | None = field(default=None, repr=False, compare=False)
 

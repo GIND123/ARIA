@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS cases (
     source_json             TEXT NOT NULL DEFAULT '{}',
     calibration_json        TEXT NOT NULL DEFAULT '{}',
     patient_json            TEXT NOT NULL DEFAULT '{}',
+    reference_json          TEXT NOT NULL DEFAULT '{}',
     display_settings_json   TEXT NOT NULL DEFAULT '{}',
     deid_report_json        TEXT NOT NULL DEFAULT '{}',
     state                   TEXT NOT NULL DEFAULT 'unassigned',
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS cases (
     laterality_confirmed_at TEXT,
     laterality_note         TEXT NOT NULL DEFAULT '',
     split                   TEXT NOT NULL DEFAULT '',
+    patient_group           TEXT NOT NULL DEFAULT '',
     imported_by             TEXT NOT NULL DEFAULT '',
     imported_at             TEXT NOT NULL,
     duplicate_target        INTEGER NOT NULL DEFAULT 0,
@@ -85,9 +87,9 @@ CREATE TABLE IF NOT EXISTS cases (
     source_sha256           TEXT NOT NULL DEFAULT '',
     UNIQUE (project_id, pseudonym)
 );
-CREATE INDEX IF NOT EXISTS idx_cases_project ON cases(project_id, state);
-CREATE INDEX IF NOT EXISTS idx_cases_assigned ON cases(assigned_to);
-CREATE INDEX IF NOT EXISTS idx_cases_sha ON cases(source_sha256);
+
+
+
 
 CREATE TABLE IF NOT EXISTS annotation_sets (
     id                 TEXT PRIMARY KEY,
@@ -106,8 +108,7 @@ CREATE TABLE IF NOT EXISTS annotation_sets (
     notes              TEXT NOT NULL DEFAULT '',
     UNIQUE (case_id, annotator_id, kind)
 );
-CREATE INDEX IF NOT EXISTS idx_sets_case ON annotation_sets(case_id);
-CREATE INDEX IF NOT EXISTS idx_sets_annotator ON annotation_sets(annotator_id, state);
+
 
 CREATE TABLE IF NOT EXISTS annotations (
     id               TEXT PRIMARY KEY,
@@ -121,6 +122,7 @@ CREATE TABLE IF NOT EXISTS annotations (
     presence         TEXT NOT NULL DEFAULT 'present',
     properties_json  TEXT NOT NULL DEFAULT '{}',
     visibility_score INTEGER,
+    confidence        REAL,
     ambiguous        INTEGER NOT NULL DEFAULT 0,
     locked           INTEGER NOT NULL DEFAULT 0,
     hidden           INTEGER NOT NULL DEFAULT 0,
@@ -132,8 +134,7 @@ CREATE TABLE IF NOT EXISTS annotations (
     deleted          INTEGER NOT NULL DEFAULT 0,
     notes            TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_ann_set ON annotations(set_id, deleted);
-CREATE INDEX IF NOT EXISTS idx_ann_class ON annotations(set_id, class_key, side);
+
 
 CREATE TABLE IF NOT EXISTS categorical_labels (
     id                   TEXT PRIMARY KEY,
@@ -159,7 +160,6 @@ CREATE TABLE IF NOT EXISTS quality_flags (
     created_by TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_flags_set ON quality_flags(set_id);
 
 CREATE TABLE IF NOT EXISTS measurements (
     id             TEXT PRIMARY KEY,
@@ -193,7 +193,6 @@ CREATE TABLE IF NOT EXISTS revisions (
     sha256        TEXT NOT NULL DEFAULT '',
     UNIQUE (set_id, revision_no)
 );
-CREATE INDEX IF NOT EXISTS idx_rev_set ON revisions(set_id, revision_no);
 
 CREATE TABLE IF NOT EXISTS reviews (
     id                 TEXT PRIMARY KEY,
@@ -204,7 +203,6 @@ CREATE TABLE IF NOT EXISTS reviews (
     created_at         TEXT NOT NULL,
     reviewed_revision  INTEGER NOT NULL DEFAULT 1
 );
-CREATE INDEX IF NOT EXISTS idx_reviews_set ON reviews(set_id);
 
 CREATE TABLE IF NOT EXISTS review_comments (
     id            TEXT PRIMARY KEY,
@@ -254,7 +252,6 @@ CREATE TABLE IF NOT EXISTS edit_journal (
     created_at  TEXT NOT NULL,
     undone      INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_journal_set ON edit_journal(set_id, sequence);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id            TEXT PRIMARY KEY,
@@ -273,10 +270,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
     previous_hash TEXT NOT NULL DEFAULT '',
     record_hash   TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp);
-CREATE INDEX IF NOT EXISTS idx_audit_case ON audit_log(case_id);
-CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id);
-CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event);
+
+
+
 
 CREATE TABLE IF NOT EXISTS export_records (
     id          TEXT PRIMARY KEY,
@@ -294,6 +290,29 @@ CREATE TABLE IF NOT EXISTS export_records (
 """
 
 #: Triggers that make the history tables append only at the storage layer.
+#: Indexes, kept apart from the table definitions and applied after any
+#: migration has run, so that an index on a newly added column cannot fail
+#: while an older database is being opened.
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_cases_project ON cases(project_id, state);
+CREATE INDEX IF NOT EXISTS idx_cases_assigned ON cases(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_cases_sha ON cases(source_sha256);
+CREATE INDEX IF NOT EXISTS idx_cases_group ON cases(project_id, patient_group);
+CREATE INDEX IF NOT EXISTS idx_sets_case ON annotation_sets(case_id);
+CREATE INDEX IF NOT EXISTS idx_sets_annotator ON annotation_sets(annotator_id, state);
+CREATE INDEX IF NOT EXISTS idx_ann_set ON annotations(set_id, deleted);
+CREATE INDEX IF NOT EXISTS idx_ann_class ON annotations(set_id, class_key, side);
+CREATE INDEX IF NOT EXISTS idx_flags_set ON quality_flags(set_id);
+CREATE INDEX IF NOT EXISTS idx_rev_set ON revisions(set_id, revision_no);
+CREATE INDEX IF NOT EXISTS idx_reviews_set ON reviews(set_id);
+CREATE INDEX IF NOT EXISTS idx_journal_set ON edit_journal(set_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_case ON audit_log(case_id);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event);
+"""
+
+
 APPEND_ONLY_TRIGGERS = """
 CREATE TRIGGER IF NOT EXISTS audit_log_no_update
 BEFORE UPDATE ON audit_log
@@ -424,7 +443,14 @@ class Database:
     # -- schema --------------------------------------------------------------
 
     def initialise(self) -> None:
-        """Create the schema and bring an existing file up to date."""
+        """Create the schema and bring an existing file up to date.
+
+        Tables first, then migrations, then indexes. The order matters: an
+        index on a column that a migration is about to add does not exist yet
+        on an older file, and creating it fails while the database is being
+        opened, which locks a study out of its own data on the first launch
+        after an upgrade.
+        """
         conn = self.connect()
         with self._lock:
             conn.executescript(SCHEMA)
@@ -435,6 +461,8 @@ class Database:
             self.set_meta("created_by_version", "1.0.0")
         else:
             self.migrate(int(current))
+        with self._lock:
+            conn.executescript(INDEXES)
 
     def migrate(self, from_version: int) -> list:
         """Apply migrations in order.
@@ -599,6 +627,21 @@ MIGRATIONS: dict = {
         ),
         "statements": [
             "ALTER TABLE cases ADD COLUMN patient_json TEXT NOT NULL DEFAULT '{}'",
+        ],
+    },
+    4: {
+        "description": (
+            "Add the pseudonymous patient group to cases, so a dataset split "
+            "can be made patient independent. Two radiographs of one patient "
+            "landing either side of a split teaches a model to recognise the "
+            "patient, and every number measured on the test set after that is "
+            "optimistic."
+        ),
+        "statements": [
+            "ALTER TABLE cases ADD COLUMN patient_group TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE annotations ADD COLUMN confidence REAL",
+            "ALTER TABLE cases ADD COLUMN reference_json TEXT NOT NULL"
+            " DEFAULT '{}'",
         ],
     },
 }

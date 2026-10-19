@@ -22,7 +22,7 @@ from .schema import (
     Side,
     get_class,
 )
-from .patient import PatientFactors
+from .patient import PatientFactors, ReferenceOutcome
 from .units import Calibration
 
 
@@ -177,6 +177,11 @@ class Case:
     #: Age, sex and the rest. Confounders, not identifiers: see core/patient.py
     #: for what is deliberately absent.
     patient: PatientFactors = field(default_factory=PatientFactors)
+    #: The measured truth a bone density estimate would be trained against. Not
+    #: a radiographic finding: a densitometry result is a separate examination,
+    #: and the dataset has to be able to say which modality, which site, which
+    #: device and how far apart in time.
+    reference: ReferenceOutcome = field(default_factory=ReferenceOutcome)
     state: str = CaseState.UNASSIGNED.value
     assigned_to: str | None = None
     #: Explicit confirmation of anatomical right and left when the source does
@@ -187,6 +192,12 @@ class Case:
     laterality_note: str = ""
     #: Dataset split label used when exporting by split (FR 052).
     split: str = ""
+    #: Pseudonymous key grouping every image of one patient. A salted digest of
+    #: the source patient identifier, never the identifier itself, so that a
+    #: split can be made patient independent without the dataset carrying
+    #: anything that names anybody. Empty means ungrouped, and an ungrouped
+    #: case is treated as its own patient, which is the safe assumption.
+    patient_group: str = ""
     imported_by: str = ""
     imported_at: str = field(default_factory=utc_now)
     #: Set when the data manager marks the case as a duplicate annotation case.
@@ -225,6 +236,12 @@ class Annotation:
     presence: str = Presence.PRESENT.value
     properties: dict = field(default_factory=dict)
     visibility_score: int | None = None     # 0 to 4, FR 018
+    #: How sure the annotator is of this object, nought to one. Distinct from
+    #: visibility: a landmark can be perfectly visible and still be one of two
+    #: candidates, and a model that is told which placements were confident can
+    #: weight them or hold them out. Empty means not stated, which is not the
+    #: same as certain.
+    confidence: float | None = None
     ambiguous: bool = False
     locked: bool = False
     hidden: bool = False

@@ -277,6 +277,38 @@ referring a patient for densitometry. ARIA says so when it sees one. That is a
 prompt to investigate, not a diagnosis, and it only means anything from a
 calibration that has been checked.
 
+### The reference examination
+
+The second half of the form records the measured truth a bone density estimate
+would be compared against: the modality, the site, the T or Z score or the
+density with its unit, the device, and how many days separated it from the
+radiograph. No dates are stored, because a pair of dates narrows a patient
+down and the interval is what an analysis needs.
+
+ARIA says whether the reference is fit to train against. A value with no
+modality, no site, no unit, no interval, or taken more than a year from the
+image, is recorded but marked unusable as a target. Such a case can still be
+used for annotation training; it simply cannot be treated as a labelled bone
+density result, and the export says so in `reference_usable_as_target`.
+
+### Keeping a patient's images together
+
+Every case carries a **patient group**: a salted digest of the source patient
+identifier, never the identifier itself. Two radiographs of one patient share a
+group, so a dataset can be split without putting the same patient on both sides
+of it. That matters more than it sounds: a model trained across such a split
+learns to recognise the patient rather than the disease, and every number
+measured on the test set afterwards is optimistic.
+
+An image that arrives with no identifier, a PNG among them, becomes its own
+group. That is the safe assumption, since treating an unknown as its own
+patient can only separate one patient's images, never merge two patients. Where
+you know two such images belong together, set the group by hand.
+
+Group by `patient_group` before splitting, never by case. The export carries
+the column, and ARIA can report any group whose images have ended up in more
+than one split.
+
 **Nothing on this form identifies a patient.** There is no name, no date of
 birth and no free date of any kind. An age of ninety or above is recorded as
 ninety, because in a study of ordinary size a single patient of a hundred and

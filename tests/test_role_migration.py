@@ -155,3 +155,127 @@ class TestNothingElseIsDisturbed:
         for produced in set(Role.RETIRED.values()):
             assert produced in Role.ALL
             assert permissions_for(produced), f"{produced} has no permissions"
+
+
+class TestUpgradingDoesNotLockAStudyOut:
+    """An index on a column a migration is about to add does not exist yet on
+    an older file. Creating it while the database is being opened fails, and a
+    study that cannot open its database cannot do anything at all.
+
+    So tables are created first, migrations run next, and indexes are built
+    last. These tests pin that order, because the failure only appears on a
+    database made by an earlier build and never on a fresh one.
+    """
+
+    def _aged_database(self, tmp_path, drop):
+        """A database at the current version with some columns taken away, the
+        way a file written by an earlier build looks."""
+        import json
+        import sqlite3
+
+        from aria.core.models import Annotation, Case, Project, SourceImage
+        from aria.core.schema import ProjectSchema
+
+        path = tmp_path / "aged.db"
+        db = open_database(path)
+        repo = Repository(db)
+        user = User(username="first", role=Role.ADMIN)
+        repo.create_user(user)
+        repo.set_actor(user)
+        project = Project(
+            name="P", schema_json=json.dumps(ProjectSchema().to_dict())
+        )
+        repo.create_project(project)
+        case = Case(
+            project_id=project.id, pseudonym="C1",
+            source=SourceImage(sha256="a" * 64, rows=10, columns=10),
+        )
+        repo.create_case(case)
+        aset = repo.get_or_create_set(case.id, user.id)
+        annotation = Annotation(
+            set_id=aset.id, class_key="menton", side="NA", geometry_type="point",
+        )
+        annotation.set_points([(5.0, 6.0)])
+        repo.save_annotations([annotation], expected_counter=0, case_id=case.id)
+        db.set_meta("db_schema_version", "3")
+        db.close()
+
+        raw = sqlite3.connect(path)
+        raw.execute("DROP INDEX IF EXISTS idx_cases_group")
+        for table, column in drop:
+            raw.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        raw.commit()
+        raw.close()
+        return path, case.id, aset.id
+
+    def test_a_database_from_the_previous_build_still_opens(self, tmp_path):
+        path, case_id, _set_id = self._aged_database(
+            tmp_path,
+            [
+                ("cases", "patient_group"),
+                ("cases", "reference_json"),
+                ("annotations", "confidence"),
+            ],
+        )
+
+        db = open_database(path)
+        try:
+            assert Repository(db).get_case(case_id) is not None
+        finally:
+            db.close()
+
+    def test_the_work_in_it_survives(self, tmp_path):
+        path, case_id, set_id = self._aged_database(
+            tmp_path,
+            [
+                ("cases", "patient_group"),
+                ("cases", "reference_json"),
+                ("annotations", "confidence"),
+            ],
+        )
+
+        db = open_database(path)
+        try:
+            repo = Repository(db)
+            case = repo.get_case(case_id)
+            assert case.pseudonym == "C1"
+            assert case.patient_group == ""
+            assert not case.reference.is_recorded
+            annotations = repo.list_annotations(set_id)
+            assert len(annotations) == 1
+            assert annotations[0].confidence is None
+        finally:
+            db.close()
+
+    def test_the_indexes_are_built_after_the_migration(self, tmp_path):
+        """The index on the new column has to exist once the upgrade is done,
+        or every later query falls back to a scan."""
+        path, _case_id, _set_id = self._aged_database(
+            tmp_path, [("cases", "patient_group")]
+        )
+
+        db = open_database(path)
+        try:
+            names = {
+                row[0] for row in db.connect().execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'"
+                )
+            }
+            assert "idx_cases_group" in names
+        finally:
+            db.close()
+
+    def test_a_fresh_database_gets_the_indexes_too(self, tmp_path):
+        """Migrations are skipped on a new file, so the indexes cannot live
+        only in a migration step."""
+        db = open_database(tmp_path / "fresh.db")
+        try:
+            names = {
+                row[0] for row in db.connect().execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'"
+                )
+            }
+            assert "idx_cases_group" in names
+            assert "idx_ann_set" in names
+        finally:
+            db.close()

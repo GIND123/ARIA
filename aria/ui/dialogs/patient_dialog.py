@@ -32,6 +32,9 @@ from ...core.patient import (
     BoneStatus,
     MenopausalStatus,
     PatientFactors,
+    ReferenceModality,
+    ReferenceOutcome,
+    ReferenceQuality,
     Sex,
     SmokingStatus,
 )
@@ -56,6 +59,7 @@ class PatientFactorsDialog(QDialog):
         self.controller = controller
         self.case = case
         self.factors = PatientFactors.from_dict(case.patient.to_dict())
+        self.reference = ReferenceOutcome.from_dict(case.reference.to_dict())
 
         self.setWindowTitle(f"Patient factors, {case.pseudonym}")
         self.setMinimumWidth(520)
@@ -140,25 +144,6 @@ class PatientFactorsDialog(QDialog):
         self.bone_status = _combo(self, BoneStatus, self.factors.bone_status)
         bone.addRow("Known bone status", self.bone_status)
 
-        self.t_score = QDoubleSpinBox(self)
-        self.t_score.setRange(-9.0, 6.0)
-        self.t_score.setDecimals(2)
-        self.t_score.setSingleStep(0.1)
-        self.t_score.setSpecialValueText("Not recorded")
-        self.t_score.setValue(
-            self.factors.dxa_t_score if self.factors.dxa_t_score is not None else -9.0
-        )
-        self.t_score.setToolTip(
-            "Lowest densitometry T score. This is the reference standard a "
-            "radiographic index is measured against, so a study that has it "
-            "can say how well the index performs."
-        )
-        bone.addRow("DXA T score", self.t_score)
-
-        self.dxa_site = QLineEdit(self.factors.dxa_site, self)
-        self.dxa_site.setPlaceholderText("Femoral neck, lumbar spine, and so on")
-        bone.addRow("Measured at", self.dxa_site)
-
         self.medication = _combo(self, BoneMedication, self.factors.medication)
         self.medication.setToolTip(
             "Medication acting on bone changes the cortex, and therefore "
@@ -166,6 +151,69 @@ class PatientFactorsDialog(QDialog):
         )
         bone.addRow("Bone medication", self.medication)
         layout.addLayout(bone)
+
+        # The reference examination. Kept in its own section because it is a
+        # different examination of the same patient, and because a value here
+        # without its modality, site, unit and interval cannot be trained
+        # against.
+        layout.addWidget(SectionLabel("Reference examination", self))
+        ref_hint = QLabel(
+            "The measured truth a bone density estimate would be compared "
+            "against. An OPG does not measure bone mineral density, so a model "
+            "trained on this data depends entirely on what is recorded here.",
+            self,
+        )
+        ref_hint.setWordWrap(True)
+        ref_hint.setProperty("dim", True)
+        layout.addWidget(ref_hint)
+
+        reference = QFormLayout()
+        reference.setSpacing(8)
+        self.ref_modality = _combo(self, ReferenceModality, self.reference.modality)
+        reference.addRow("Modality", self.ref_modality)
+
+        self.ref_site = QLineEdit(self.reference.site, self)
+        self.ref_site.setPlaceholderText("Femoral neck, lumbar spine, and so on")
+        reference.addRow("Site", self.ref_site)
+
+        self.ref_t = QDoubleSpinBox(self)
+        self.ref_t.setRange(-9.0, 6.0)
+        self.ref_t.setDecimals(2)
+        self.ref_t.setSingleStep(0.1)
+        self.ref_t.setSpecialValueText("Not recorded")
+        self.ref_t.setValue(
+            self.reference.t_score if self.reference.t_score is not None else -9.0
+        )
+        reference.addRow("T score", self.ref_t)
+
+        self.ref_z = QDoubleSpinBox(self)
+        self.ref_z.setRange(-9.0, 6.0)
+        self.ref_z.setDecimals(2)
+        self.ref_z.setSingleStep(0.1)
+        self.ref_z.setSpecialValueText("Not recorded")
+        self.ref_z.setValue(
+            self.reference.z_score if self.reference.z_score is not None else -9.0
+        )
+        reference.addRow("Z score", self.ref_z)
+
+        self.ref_days = QSpinBox(self)
+        self.ref_days.setRange(-3650, 3650)
+        self.ref_days.setSuffix(" days from the image")
+        self.ref_days.setValue(self.reference.days_from_image or 0)
+        self.ref_days.setToolTip(
+            "Negative means the reference examination came first. No dates are "
+            "stored: a pair of dates narrows a patient down, and the interval "
+            "is what the analysis needs."
+        )
+        reference.addRow("Interval", self.ref_days)
+
+        self.ref_device = QLineEdit(self.reference.device, self)
+        self.ref_device.setPlaceholderText("Densitometer or scanner")
+        reference.addRow("Device", self.ref_device)
+
+        self.ref_quality = _combo(self, ReferenceQuality, self.reference.quality)
+        reference.addRow("Fit to train against", self.ref_quality)
+        layout.addLayout(reference)
 
         self.notes = QTextEdit(self)
         self.notes.setPlainText(self.factors.notes)
@@ -226,10 +274,6 @@ class PatientFactorsDialog(QDialog):
             weight_kg=self.weight.value() or None,
             smoking_status=self.smoking.currentData(),
             bone_status=self.bone_status.currentData(),
-            dxa_t_score=(
-                None if self.t_score.value() <= -9.0 else self.t_score.value()
-            ),
-            dxa_site=self.dxa_site.text().strip(),
             medication=self.medication.currentData(),
             notes=self.notes.toPlainText().strip(),
         )
@@ -246,4 +290,34 @@ class PatientFactorsDialog(QDialog):
             self.banner.show_message(" ".join(notes), "warn")
 
         self.controller.set_patient_factors(self.case.id, factors)
+
+        reference = ReferenceOutcome(
+            modality=self.ref_modality.currentData(),
+            site=self.ref_site.text().strip(),
+            t_score=None if self.ref_t.value() <= -9.0 else self.ref_t.value(),
+            z_score=None if self.ref_z.value() <= -9.0 else self.ref_z.value(),
+            bmd_value=self.reference.bmd_value,
+            bmd_unit=self.reference.bmd_unit,
+            days_from_image=self.ref_days.value() or None,
+            device=self.ref_device.text().strip(),
+            source=self.reference.source,
+            quality=self.ref_quality.currentData(),
+            notes=self.reference.notes,
+        )
+        self.reference = reference
+        self.controller.set_reference_outcome(self.case.id, reference)
+
+        usable, reasons = reference.usable_as_target()
+        if reference.is_recorded and not usable:
+            # Said rather than refused. An incomplete reference is still worth
+            # recording, and whoever assembles the dataset decides what to do
+            # with it; what matters is that nobody later mistakes it for a
+            # usable training target.
+            self.banner.show_message(
+                "Saved. This reference cannot be used as a training target "
+                "yet: " + " ".join(reasons),
+                "warn",
+            )
+            return
+
         self.accept()
