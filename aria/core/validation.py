@@ -332,6 +332,60 @@ class SubmissionValidator:
             )
         )
 
+    def _check_perpendicularity(self, line, border, side, result) -> None:
+        """A thickness line has to cross the cortex squarely (FR 054).
+
+        Cortical width measured off perpendicular is overstated by one over the
+        cosine of the deviation. Fifteen degrees inflates it by three and a
+        half per cent, twenty five by ten, and both are larger than the
+        differences this literature reports between groups. Nothing in the
+        image shows the error, so without a check it travels silently into
+        every index derived from that line and into the dataset after it.
+        """
+        import math
+
+        from .geometry import angle_between, tangent_at, vector
+
+        points = line.points()
+        border_points = border.points()
+        if len(points) < 2 or len(border_points) < 2:
+            return
+
+        try:
+            direction = vector(points[0], points[-1])
+            tangent = tangent_at(border_points, points[0])
+            angle = math.degrees(angle_between(direction, tangent))
+        except (ValueError, ZeroDivisionError):
+            return
+
+        # The unsigned angle to the tangent, folded into nought to ninety.
+        deviation = abs(90.0 - (angle if angle <= 90.0 else 180.0 - angle))
+        tolerance = self.schema.line_perpendicularity_tolerance_deg
+        if deviation <= tolerance:
+            return
+
+        overstatement = (1.0 / math.cos(math.radians(min(deviation, 80.0))) - 1.0) * 100.0
+        result.add(
+            Issue(
+                code="thickness_line_not_perpendicular",
+                severity=Severity.WARNING.value,
+                message=(
+                    f"The cortical width line on the {side.display.lower()} "
+                    f"side meets the border {deviation:.0f} degrees off "
+                    f"perpendicular, which overstates the thickness by about "
+                    f"{overstatement:.0f} per cent."
+                ),
+                remedy=(
+                    "Redraw the line square to the lower border at the mental "
+                    "foramen. Construct from contours places it perpendicular "
+                    "for you."
+                ),
+                class_key=line.class_key, side=side.value,
+                annotation_id=line.id,
+                requirement="FR 054",
+            )
+        )
+
     def _check_required_labels(self, data, result: ValidationResult) -> None:
         for key in self.schema.required_classes:
             if key in self.schema.allowed_omissions:
@@ -660,6 +714,8 @@ class SubmissionValidator:
                             requirement="FR 022",
                         )
                     )
+
+                self._check_perpendicularity(mcw, peri, side, result)
 
             pmi_s = data.present("pmi_superior_line", side)
             pmi_i = data.present("pmi_inferior_line", side)

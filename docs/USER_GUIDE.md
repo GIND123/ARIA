@@ -309,6 +309,41 @@ Group by `patient_group` before splitting, never by case. The export carries
 the column, and ARIA can report any group whose images have ended up in more
 than one split.
 
+### Cutting a dataset release
+
+A release freezes what a model will be trained from: the label schema exactly
+as it stood, the split case by case, what was left out and why, and a checksum
+over the lot. The schema is copied into the release rather than referenced, so
+changing a tolerance afterwards cannot alter what a finished release contains.
+
+The release manifest states its own defects rather than hiding them. It reports
+whether the split is patient independent, whether the same radiograph appears
+twice, and which excluded cases gave no reason. ARIA will cut a release that
+fails those checks, because refusing would only push the work somewhere with no
+record of it, but the manifest says so plainly.
+
+**Excluding a case records why.** An exclusion with no reason cannot be told
+apart from an oversight, and a dataset that cannot account for what it left out
+cannot be audited.
+
+**The same radiograph twice is found.** A checksum catches the identical file.
+It does not catch the same study exported again at a different window, resaved
+as PNG, or cropped by a pixel, and those are the copies that leak across a
+split: a model meets one in training and its twin in the test set, and the test
+number stops meaning anything. Every case carries a difference hash of its
+pixels, and ARIA reports pairs that are the same radiograph, flagging those
+recorded as different patients on opposite sides of a split.
+
+### Lines that cross the cortex squarely
+
+A cortical width measured off perpendicular is overstated by one over the
+cosine of the deviation: fifteen degrees inflates it by three and a half per
+cent and twenty five by ten, both larger than the differences this literature
+reports between groups. Nothing in the image shows the error. ARIA measures the
+angle between each thickness line and the border it crosses and reports a line
+that is too far off, with the overstatement it causes. Construct from contours
+places the line perpendicular for you.
+
 **Nothing on this form identifies a patient.** There is no name, no date of
 birth and no free date of any kind. An age of ninety or above is recorded as
 ninety, because in a study of ordinary size a single patient of a hundred and

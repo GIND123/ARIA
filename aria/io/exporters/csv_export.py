@@ -38,6 +38,8 @@ DATA_DICTIONARY = [
     ("project_name", "cases", "text", "", "Name of the project the case belongs to."),
     ("case_status", "cases", "text", "", "Workflow state: unassigned, assigned, in progress, submitted, returned, accepted or adjudicated."),
     ("split", "cases", "text", "", "Dataset split label assigned by the data manager. Allowed values: train, validation, test, calibration, or empty when not yet assigned."),
+    ("perceptual_hash", "cases", "text", "", "Difference hash of the pixels. Two cases within a Hamming distance of about eight are the same radiograph, which a checksum alone does not catch. Compare these before splitting: the same study exported twice, once into training and once into test, makes the test metric meaningless."),
+    ("exclusion_reason", "cases", "text", "", "Why this case is not in the dataset, when it is not. Empty for an included case. An exclusion with no reason cannot be told apart from an oversight."),
     ("patient_group", "cases", "text", "", "Pseudonymous key grouping every image of one patient. A salted digest of the source patient identifier, never the identifier. Group by this column before splitting: two images of one patient on opposite sides of a split let a model learn the patient rather than the disease. Empty means ungrouped, which is to be treated as its own patient."),
     ("source_format", "cases", "text", "", "Format of the retained original file: dicom or png."),
     ("source_checksum_sha256", "cases", "text", "", "SHA-256 digest of the retained original file."),
@@ -210,6 +212,8 @@ def case_row(data, project, annotator=None, reviewer=None) -> dict:
         # splitting, never by case: two radiographs of one patient either side
         # of a split teach a model the patient.
         "patient_group": case.patient_group,
+        "perceptual_hash": case.perceptual_hash,
+        "exclusion_reason": case.exclusion_reason,
         "source_format": case.source.source_format,
         "source_checksum_sha256": case.source.sha256,
         "source_filename": case.source.original_filename,
@@ -280,7 +284,7 @@ def case_row(data, project, annotator=None, reviewer=None) -> dict:
 
 CASE_FIELDS = [
     "case_pseudonym", "case_id", "project_name", "case_status", "split",
-    "patient_group",
+    "patient_group", "perceptual_hash", "exclusion_reason",
     "source_format", "source_checksum_sha256", "source_filename", "image_rows",
     "image_columns", "bits_stored", "photometric_interpretation",
     "converted_for_display", "manufacturer", "manufacturer_model",

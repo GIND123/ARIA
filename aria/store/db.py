@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS cases (
     duplicate_target        INTEGER NOT NULL DEFAULT 0,
     archived                INTEGER NOT NULL DEFAULT 0,
     source_sha256           TEXT NOT NULL DEFAULT '',
+    perceptual_hash         TEXT NOT NULL DEFAULT '',
+    exclusion_reason        TEXT NOT NULL DEFAULT '',
     UNIQUE (project_id, pseudonym)
 );
 
@@ -294,6 +296,8 @@ CREATE TABLE IF NOT EXISTS export_records (
 #: migration has run, so that an index on a newly added column cannot fail
 #: while an older database is being opened.
 INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_cases_phash ON cases(project_id, perceptual_hash);
+CREATE INDEX IF NOT EXISTS idx_release_cases ON dataset_release_cases(release_id);
 CREATE INDEX IF NOT EXISTS idx_cases_project ON cases(project_id, state);
 CREATE INDEX IF NOT EXISTS idx_cases_assigned ON cases(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_cases_sha ON cases(source_sha256);
@@ -310,6 +314,40 @@ CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_case ON audit_log(case_id);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event);
+"""
+
+
+#: A frozen dataset release: the schema, the split and the case list as they
+#: stood when the release was cut. Without this a dataset cannot be rebuilt,
+#: and a model cannot say what it was trained on.
+RELEASE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dataset_releases (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    created_by      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    schema_json     TEXT NOT NULL DEFAULT '{}',
+    schema_version  TEXT NOT NULL DEFAULT '',
+    inclusion_rules TEXT NOT NULL DEFAULT '',
+    notes           TEXT NOT NULL DEFAULT '',
+    manifest_json   TEXT NOT NULL DEFAULT '{}',
+    sha256          TEXT NOT NULL DEFAULT '',
+    UNIQUE (project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS dataset_release_cases (
+    release_id       TEXT NOT NULL REFERENCES dataset_releases(id) ON DELETE CASCADE,
+    case_id          TEXT NOT NULL,
+    case_pseudonym   TEXT NOT NULL DEFAULT '',
+    patient_group    TEXT NOT NULL DEFAULT '',
+    split            TEXT NOT NULL DEFAULT '',
+    included         INTEGER NOT NULL DEFAULT 1,
+    exclusion_reason TEXT NOT NULL DEFAULT '',
+    source_sha256    TEXT NOT NULL DEFAULT '',
+    perceptual_hash  TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (release_id, case_id)
+);
 """
 
 
@@ -454,6 +492,7 @@ class Database:
         conn = self.connect()
         with self._lock:
             conn.executescript(SCHEMA)
+            conn.executescript(RELEASE_SCHEMA)
             conn.executescript(APPEND_ONLY_TRIGGERS)
         current = self.get_meta("db_schema_version")
         if current is None:
@@ -642,6 +681,20 @@ MIGRATIONS: dict = {
             "ALTER TABLE annotations ADD COLUMN confidence REAL",
             "ALTER TABLE cases ADD COLUMN reference_json TEXT NOT NULL"
             " DEFAULT '{}'",
+        ],
+    },
+    5: {
+        "description": (
+            "Add a perceptual hash and an exclusion reason to cases, and the "
+            "dataset release tables. A checksum catches the same file twice "
+            "but not the same radiograph exported again, and those are the "
+            "copies that leak across a split."
+        ),
+        "statements": [
+            "ALTER TABLE cases ADD COLUMN perceptual_hash TEXT NOT NULL"
+            " DEFAULT ''",
+            "ALTER TABLE cases ADD COLUMN exclusion_reason TEXT NOT NULL"
+            " DEFAULT ''",
         ],
     },
 }

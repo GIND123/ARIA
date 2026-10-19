@@ -835,6 +835,12 @@ class ProjectSchema:
     point_tolerance_px: float = 8.0
     line_endpoint_tolerance_px: float = 10.0
     measurement_tolerance_mm: float = 0.30
+    #: How far a thickness line may deviate from perpendicular to the cortex
+    #: before it is reported. A cortical width measured off perpendicular is
+    #: overstated by one over the cosine of the deviation, so fifteen degrees
+    #: inflates it by three and a half per cent and twenty five by ten: both
+    #: larger than the differences this literature reports between groups.
+    line_perpendicularity_tolerance_deg: float = 15.0
     mask_dice_tolerance: float = 0.80
     #: Fraction of cases double annotated for agreement analysis (FR 043).
     duplicate_fraction: float = 0.20
@@ -873,6 +879,7 @@ class ProjectSchema:
             "require_mci_grade": self.require_mci_grade,
             "require_laterality_confirmation": self.require_laterality_confirmation,
             "require_calibration_for_submission": self.require_calibration_for_submission,
+            "line_perpendicularity_tolerance_deg": self.line_perpendicularity_tolerance_deg,
             "point_tolerance_px": self.point_tolerance_px,
             "line_endpoint_tolerance_px": self.line_endpoint_tolerance_px,
             "measurement_tolerance_mm": self.measurement_tolerance_mm,

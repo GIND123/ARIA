@@ -322,3 +322,18 @@ class TestFreeTextIsScannedBeforeItLeaves:
             medication=BoneMedication.BISPHOSPHONATE.value,
         )
         assert not scan_payload({"patient": factors.to_dict()}, [])
+
+    def test_a_pseudonym_of_only_digits_is_not_a_phone_number(self):
+        """The pseudonym is a hex digest, and when a digest happens to contain
+        no letters it is exactly the length of a telephone number. Without
+        this the scan failed on a random subset of exports and passed on the
+        rest, which is worse than failing every time."""
+        from aria.io.deident import scan_payload
+
+        for payload in (
+            {"case_pseudonym": "ARIA-398070954919"},
+            {"annotator_pseudonym": "ANN-001"},
+            {"patient_group": "PT-398070954919"},
+            {"perceptual_hash": "16b5b98d92956ab95cae9"},
+        ):
+            assert not scan_payload(payload, []), payload

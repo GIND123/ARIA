@@ -522,6 +522,12 @@ def _looks_like_a_contact_number(fragment: str) -> bool:
 _STRUCTURAL_KEY_HINTS = (
     "uid", "checksum", "sha", "hash", "version", "_id", "id_", "guid",
     "instance", "class", "syntax", "sequence", "revision", "counter",
+    # A pseudonym and a patient group are identifiers of the data, not of a
+    # person: that is the whole point of them. Their digits are a hex digest,
+    # and when a digest happens to contain no letters it is exactly the length
+    # of a telephone number, so without this the scan fails on a random subset
+    # of exports and passes on the rest.
+    "pseudonym", "group",
 )
 
 

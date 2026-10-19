@@ -424,3 +424,358 @@ class TestEveryExportedColumnCanBeInterpreted:
         ):
             description = entries[column][-1]
             assert "llowed values" in description, column
+
+
+class TestTheSameRadiographTwiceIsFound:
+    """FR 070. A checksum catches the same file; it does not catch the same
+    study exported again, and those are the copies that leak across a split."""
+
+    def test_a_case_carries_a_perceptual_hash(self, importer, project, admin, sample_dicom):
+        outcome = importer.import_file(
+            str(sample_dicom), project.id, imported_by=admin.id
+        )
+        assert outcome.succeeded, outcome.error_message
+        assert outcome.case.perceptual_hash
+
+    def test_the_hash_survives_rewindowing_and_requantising(self, sample_dicom):
+        """The two things that happen when a study is exported again."""
+        import numpy as np
+
+        from aria.io.dicom_reader import read_dicom
+        from aria.io.image import hamming_distance, perceptual_hash
+
+        pixels = read_dicom(str(sample_dicom)).pixels
+        original = perceptual_hash(pixels)
+
+        brighter = np.clip(
+            pixels.astype(np.int32) * 1.15, 0, int(pixels.max())
+        ).astype(pixels.dtype)
+        eight_bit = (pixels // max(1, int(pixels.max()) // 255)).astype(np.uint8)
+
+        assert hamming_distance(original, perceptual_hash(brighter)) <= 2
+        assert hamming_distance(original, perceptual_hash(eight_bit)) <= 2
+
+    def test_two_different_radiographs_are_far_apart(self, sample_dicom, sample_png):
+        """So that the threshold has somewhere to sit."""
+        from aria.io.dicom_reader import read_dicom
+        from aria.io.image import hamming_distance, perceptual_hash
+        from aria.io.png_reader import read_png
+
+        a = perceptual_hash(read_dicom(str(sample_dicom)).pixels)
+        b = perceptual_hash(read_png(str(sample_png)).pixels)
+        assert hamming_distance(a, b) > 20
+
+    def test_a_missing_hash_is_not_treated_as_a_match(self):
+        """An empty hash compared with anything has to read as far away, or
+        every uncomputed case would look like a duplicate of every other."""
+        from aria.io.image import hamming_distance
+
+        assert hamming_distance("", "abc") > 1000
+        assert hamming_distance("abc", "") > 1000
+        assert hamming_distance("ab", "abcd") > 1000
+
+    def test_a_reimported_study_is_reported(self, repo, project, admin, sample_dicom):
+        """Two cases holding the same pixels, recorded as different patients."""
+        from aria.core.models import Case, SourceImage
+        from aria.io.dicom_reader import read_dicom
+        from aria.io.image import perceptual_hash
+
+        repo.set_actor(admin)
+        digest = perceptual_hash(read_dicom(str(sample_dicom)).pixels)
+        for index, (group, split) in enumerate(
+            [("PT-A", "train"), ("PT-B", "test")]
+        ):
+            case = Case(
+                project_id=project.id, pseudonym=f"DUP-{index}",
+                source=SourceImage(sha256=f"{index:064d}", rows=10, columns=10),
+                patient_group=group, split=split, perceptual_hash=digest,
+            )
+            repo.create_case(case)
+
+        pairs = repo.find_near_duplicates(project.id)
+        assert pairs, "The same radiograph twice went unreported"
+        assert pairs[0]["distance"] == 0
+        assert pairs[0]["leaks_across_split"] is True
+        assert pairs[0]["identical_file"] is False
+
+    def test_the_same_patient_on_one_side_of_the_split_does_not_leak(
+        self, repo, project, admin
+    ):
+        """Two images of one patient, both in training, are not a leak."""
+        from aria.core.models import Case, SourceImage
+
+        repo.set_actor(admin)
+        for index in range(2):
+            repo.create_case(
+                Case(
+                    project_id=project.id, pseudonym=f"SAME-{index}",
+                    source=SourceImage(sha256=f"{index:064d}", rows=10, columns=10),
+                    patient_group="PT-A", split="train",
+                    perceptual_hash="0" * 21,
+                )
+            )
+
+        pairs = repo.find_near_duplicates(project.id)
+        assert pairs
+        assert pairs[0]["leaks_across_split"] is False
+
+    def test_the_hash_reaches_the_export(self, repo, calibrated_case, annotator, project):
+        from aria.io.exporters.csv_export import case_row
+        from tests.conftest import build_annotation_set
+
+        data = build_annotation_set(repo, calibrated_case, annotator)
+        assert case_row(data, project, annotator)["perceptual_hash"]
+
+
+class TestWhatWasLeftOutSaysWhy:
+    """FR 071. An exclusion with no reason reads as an oversight."""
+
+    def test_archiving_records_the_reason(self, repo, imported_case):
+        repo.archive_case(imported_case.id, "Cropped below the antegonial region.")
+        case = repo.get_case(imported_case.id)
+
+        assert case.archived
+        assert "antegonial" in case.exclusion_reason
+
+    def test_the_reason_can_be_set_on_its_own(self, repo, imported_case):
+        repo.set_exclusion_reason(imported_case.id, "Awaiting a reference scan.")
+        assert repo.get_case(imported_case.id).exclusion_reason == (
+            "Awaiting a reference scan."
+        )
+
+    def test_an_included_case_has_no_reason(self, imported_case):
+        assert imported_case.exclusion_reason == ""
+
+    def test_the_reason_reaches_the_export(self, repo, calibrated_case, annotator, project):
+        from aria.io.exporters.csv_export import case_row
+        from tests.conftest import build_annotation_set
+
+        data = build_annotation_set(repo, calibrated_case, annotator)
+        assert "exclusion_reason" in case_row(data, project, annotator)
+
+
+class TestADatasetReleaseIsFrozen:
+    """FR 046 and FR 072. A release is what a model is trained from, so the
+    schema cannot be allowed to move underneath it."""
+
+    def _release(self, repo, project, admin, schema):
+        repo.set_actor(admin)
+        return repo.create_dataset_release(
+            project.id, "v1.0", schema,
+            notes="First release.",
+            inclusion_rules="Dentate adults with both antegonial regions visible.",
+        )
+
+    def test_a_release_records_what_it_contains(
+        self, repo, project, admin, schema, imported_case
+    ):
+        release = self._release(repo, project, admin, schema)
+
+        assert release["name"] == "v1.0"
+        assert release["n_cases"] >= 1
+        assert release["sha256"]
+        assert release["inclusion_rules"]
+
+    def test_the_schema_is_copied_rather_than_referenced(
+        self, repo, project, admin, schema, imported_case
+    ):
+        """The whole point. Two models trained on one named dataset have to
+        have been trained on the same data."""
+        import json
+
+        release = self._release(repo, project, admin, schema)
+        before = repo.get_dataset_release(release["id"])["schema"]["point_tolerance_px"]
+
+        schema.point_tolerance_px = 99.0
+        project.schema_json = json.dumps(schema.to_dict())
+        repo.update_project(project, "tolerance changed")
+
+        after = repo.get_dataset_release(release["id"])["schema"]["point_tolerance_px"]
+        assert after == before
+        assert after != 99.0
+
+    def test_the_split_is_recorded_case_by_case(
+        self, repo, project, admin, schema, imported_case
+    ):
+        release = self._release(repo, project, admin, schema)
+        stored = repo.get_dataset_release(release["id"])
+
+        assert stored["cases"]
+        for row in stored["cases"]:
+            assert "split" in row
+            assert "patient_group" in row
+
+    def test_a_release_states_whether_it_is_patient_independent(
+        self, repo, project, admin, schema
+    ):
+        from aria.core.models import Case, SourceImage
+
+        repo.set_actor(admin)
+        for index, split in enumerate(("train", "test")):
+            repo.create_case(
+                Case(
+                    project_id=project.id, pseudonym=f"LEAK-{index}",
+                    source=SourceImage(sha256=f"{index:064d}", rows=10, columns=10),
+                    patient_group="PT-A", split=split,
+                )
+            )
+
+        release = repo.create_dataset_release(project.id, "v1.1", schema)
+        assert release["patient_independent"] is False
+        assert release["splits"]["n_leaking_groups"] == 1
+
+    def test_a_release_is_cut_even_when_it_has_defects(
+        self, repo, project, admin, schema
+    ):
+        """Refusing would push the work somewhere with no record of it. A
+        release that states its own defects is more useful than none."""
+        from aria.core.models import Case, SourceImage
+
+        repo.set_actor(admin)
+        for index, split in enumerate(("train", "test")):
+            repo.create_case(
+                Case(
+                    project_id=project.id, pseudonym=f"BAD-{index}",
+                    source=SourceImage(sha256=f"{index:064d}", rows=10, columns=10),
+                    patient_group="PT-A", split=split,
+                )
+            )
+
+        release = repo.create_dataset_release(project.id, "v1.2", schema)
+        assert release["id"]
+        assert release["patient_independent"] is False
+
+    def test_a_release_names_exclusions_that_give_no_reason(
+        self, repo, project, admin, schema, imported_case
+    ):
+        repo.archive_case(imported_case.id, "")
+        release = self._release(repo, project, admin, schema)
+
+        assert imported_case.pseudonym in release["excluded_without_a_reason"]
+
+    def test_an_excluded_case_with_a_reason_is_not_named(
+        self, repo, project, admin, schema, imported_case
+    ):
+        repo.archive_case(imported_case.id, "Positioning error, ramus clipped.")
+        release = self._release(repo, project, admin, schema)
+
+        assert release["excluded_without_a_reason"] == []
+        assert release["n_excluded"] == 1
+
+    def test_the_checksum_changes_when_the_contents_do(
+        self, repo, project, admin, schema, imported_case
+    ):
+        from aria.core.models import Case, SourceImage
+
+        first = self._release(repo, project, admin, schema)
+        repo.create_case(
+            Case(
+                project_id=project.id, pseudonym="EXTRA",
+                source=SourceImage(sha256="f" * 64, rows=10, columns=10),
+            )
+        )
+        second = repo.create_dataset_release(project.id, "v2.0", schema)
+
+        assert first["sha256"] != second["sha256"]
+
+    def test_releases_are_listed(self, repo, project, admin, schema, imported_case):
+        self._release(repo, project, admin, schema)
+        repo.create_dataset_release(project.id, "v2.0", schema)
+
+        names = [r["name"] for r in repo.list_dataset_releases(project.id)]
+        assert set(names) == {"v1.0", "v2.0"}
+
+    def test_cutting_a_release_is_audited(
+        self, repo, project, admin, schema, imported_case
+    ):
+        self._release(repo, project, admin, schema)
+        details = [r.detail for r in repo.audit_records(limit=10)]
+        assert any("Dataset release v1.0" in (d or "") for d in details)
+
+
+class TestAThicknessLineCrossesTheCortexSquarely:
+    """FR 054. Cortical width measured off perpendicular is overstated by one
+    over the cosine of the deviation, and nothing in the image shows it."""
+
+    def test_a_square_line_is_not_flagged(self, repo, calibrated_case, annotator):
+        from aria.core.schema import ProjectSchema
+        from aria.core.validation import validate_for_submission
+        from tests.conftest import build_annotation_set
+
+        data = build_annotation_set(repo, calibrated_case, annotator)
+        result = validate_for_submission(data, ProjectSchema())
+
+        assert not [
+            i for i in result.issues
+            if i.code == "thickness_line_not_perpendicular"
+        ]
+
+    def test_a_tilted_line_is_flagged_with_the_error_it_causes(
+        self, repo, calibrated_case, annotator
+    ):
+        import math
+
+        from aria.core.schema import ProjectSchema, Side
+        from aria.core.validation import validate_for_submission
+        from tests.conftest import build_annotation_set
+
+        data = build_annotation_set(repo, calibrated_case, annotator)
+        line = data.present("mcw_line", Side.RIGHT)
+        start, end = line.points()
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        angle = math.radians(40)
+        line.set_points([
+            start,
+            (start[0] + length * math.sin(angle), start[1] + length * math.cos(angle)),
+        ])
+        repo.save_annotations(
+            [line], expected_counter=data.annotation_set.edit_counter,
+            case_id=calibrated_case.id,
+        )
+
+        again = repo.load_set_data(data.annotation_set.id)
+        flagged = [
+            i for i in validate_for_submission(again, ProjectSchema()).issues
+            if i.code == "thickness_line_not_perpendicular"
+        ]
+        assert flagged, "A line 40 degrees off perpendicular passed"
+        assert "per cent" in flagged[0].message
+
+    def test_it_is_a_warning_rather_than_a_refusal(
+        self, repo, calibrated_case, annotator
+    ):
+        import math
+
+        from aria.core.schema import ProjectSchema, Side
+        from aria.core.validation import validate_for_submission
+        from tests.conftest import build_annotation_set
+
+        data = build_annotation_set(repo, calibrated_case, annotator)
+        line = data.present("mcw_line", Side.RIGHT)
+        start, end = line.points()
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        angle = math.radians(40)
+        line.set_points([
+            start,
+            (start[0] + length * math.sin(angle), start[1] + length * math.cos(angle)),
+        ])
+        repo.save_annotations(
+            [line], expected_counter=data.annotation_set.edit_counter,
+            case_id=calibrated_case.id,
+        )
+
+        result = validate_for_submission(
+            repo.load_set_data(data.annotation_set.id), ProjectSchema()
+        )
+        flagged = [
+            i for i in result.issues
+            if i.code == "thickness_line_not_perpendicular"
+        ]
+        assert all(i.severity == "warning" for i in flagged)
+
+    def test_the_tolerance_is_tight_enough_to_matter(self):
+        """Fifteen degrees inflates a width by three and a half per cent, which
+        is already the order of the differences this literature reports."""
+        from aria.core.schema import ProjectSchema
+
+        assert ProjectSchema().line_perpendicularity_tolerance_deg <= 20.0

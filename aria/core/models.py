@@ -203,6 +203,13 @@ class Case:
     #: Set when the data manager marks the case as a duplicate annotation case.
     duplicate_target: bool = False
     archived: bool = False
+    #: A difference hash of the pixels, for finding the same radiograph
+    #: exported twice. A checksum only catches the identical file.
+    perceptual_hash: str = ""
+    #: Why this case is not in the dataset, when it is not. Recorded rather
+    #: than left to be inferred from the case being absent, because a reader
+    #: cannot tell a deliberate exclusion from an oversight.
+    exclusion_reason: str = ""
 
     @property
     def state_enum(self) -> CaseState:

@@ -27,6 +27,7 @@ from ..core.models import Case, SourceImage, new_id
 from ..core.schema import CaseState
 from ..core.units import Calibration
 from .deident import DeidProfile, deidentify_source_meta, get_profile, pseudonym_for
+from .image import perceptual_hash
 from .fsutil import atomic_write_bytes, copy_preserving, safe_filename, sha256_file
 from .guards import InspectionResult, inspect_file
 from .image import ImageData
@@ -272,6 +273,7 @@ class Importer:
                 state=CaseState.UNASSIGNED.value,
                 split=split,
                 patient_group=patient_group,
+                perceptual_hash=perceptual_hash(image.pixels),
                 imported_by=imported_by,
             )
 

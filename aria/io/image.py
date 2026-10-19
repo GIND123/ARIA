@@ -397,3 +397,61 @@ AVAILABLE_FILTERS = (
     ("clahe", "Adaptive equalise"),
     ("cortex_boost", "Cortex readability"),
 )
+
+
+def perceptual_hash(pixels, size: int = 9) -> str:
+    """A difference hash of an image, for finding near duplicates.
+
+    A checksum catches the same file twice. It does not catch the same
+    radiograph exported again at a different window, resaved as PNG, or
+    cropped by a pixel, and those are the copies that leak across a dataset
+    split: a model sees one in training and its twin in the test set, and the
+    test metric stops meaning anything.
+
+    The image is reduced to a small grid of mean intensities and each cell is
+    compared with the one to its right. The result depends on the pattern of
+    light and dark rather than on exact values, so it survives rescaling,
+    requantisation and mild windowing, which is what makes it useful here.
+    Pure numpy, so the answer is the same on every machine and every run.
+    """
+    import numpy as np
+
+    a = np.asarray(pixels, dtype=np.float64)
+    if a.ndim == 3:
+        a = a.mean(axis=2)
+    if a.size == 0 or a.shape[0] < 2 or a.shape[1] < 2:
+        return ""
+
+    # Block means rather than nearest neighbour sampling, so a single bright
+    # speck cannot decide a bit.
+    rows = np.array_split(np.arange(a.shape[0]), size)
+    cols = np.array_split(np.arange(a.shape[1]), size + 1)
+    grid = np.empty((size, size + 1), dtype=np.float64)
+    for i, r in enumerate(rows):
+        for j, c in enumerate(cols):
+            if len(r) == 0 or len(c) == 0:
+                grid[i, j] = 0.0
+            else:
+                grid[i, j] = a[np.ix_(r, c)].mean()
+
+    bits = grid[:, 1:] > grid[:, :-1]
+    value = 0
+    for bit in bits.flatten():
+        value = (value << 1) | int(bool(bit))
+    width = size * size
+    return format(value, f"0{(width + 3) // 4}x")
+
+
+def hamming_distance(a: str, b: str) -> int:
+    """How many bits two perceptual hashes differ by.
+
+    Returns a large number rather than raising when either side is missing or
+    the two were made at different sizes, so a caller comparing a mixed set
+    treats the unknown as not a duplicate instead of as an identical one.
+    """
+    if not a or not b or len(a) != len(b):
+        return 1 << 16
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except ValueError:
+        return 1 << 16

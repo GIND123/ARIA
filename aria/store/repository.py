@@ -391,8 +391,9 @@ class Repository:
                 " assigned_to, laterality_confirmed, laterality_confirmed_by,"
                 " laterality_confirmed_at, laterality_note, split, patient_group,"
                 " imported_by,"
-                " imported_at, duplicate_target, archived, source_sha256)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " imported_at, duplicate_target, archived, source_sha256,"
+                " perceptual_hash, exclusion_reason)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     case.id, case.project_id, case.pseudonym,
                     _json(case.source.to_dict()), _json(case.calibration.to_dict()),
@@ -404,6 +405,7 @@ class Repository:
                     case.patient_group,
                     case.imported_by, case.imported_at, int(case.duplicate_target),
                     int(case.archived), case.source.sha256,
+                    case.perceptual_hash, case.exclusion_reason,
                 ),
             )
             self.log(
@@ -563,6 +565,230 @@ class Repository:
                 project_id=case.project_id, case_id=case_id, conn=c,
             )
 
+    def create_dataset_release(
+        self, project_id: str, name: str, schema, notes: str = "",
+        inclusion_rules: str = "", created_by: str = "",
+    ) -> dict:
+        """Freeze a dataset: the schema, the split and the case list (FR 046, FR 072).
+
+        A release is the thing a model is trained from and the thing a result
+        is traced back to. If the label schema can move underneath it, two
+        models trained on "the same" dataset were trained on different data and
+        nobody can tell which. So the schema is copied into the release rather
+        than referenced, the split is recorded case by case, and what was left
+        out is recorded with its reason rather than simply being absent.
+
+        The manifest reports whether the release is patient independent and
+        whether it contains the same radiograph twice. It does not refuse to
+        cut a release that fails those checks: refusing would push the work
+        somewhere with no record of it, and a release that states its own
+        defects is more useful than one that cannot be made.
+        """
+        import hashlib
+        import json as _json_mod
+
+        from ..core.models import new_id, utc_now
+
+        project = self.get_project(project_id)
+        if project is None:
+            raise KeyError(f"No project with identifier {project_id}")
+
+        cases = self.list_cases(project_id=project_id, include_archived=True)
+        rows = [
+            {
+                "case_id": c.id,
+                "case_pseudonym": c.pseudonym,
+                "patient_group": c.patient_group,
+                "split": c.split,
+                "included": not c.archived,
+                "exclusion_reason": c.exclusion_reason,
+                "source_sha256": c.source.sha256,
+                "perceptual_hash": c.perceptual_hash,
+            }
+            for c in cases
+        ]
+
+        schema_dict = schema.to_dict() if hasattr(schema, "to_dict") else dict(schema)
+        included = [r for r in rows if r["included"]]
+        excluded = [r for r in rows if not r["included"]]
+        manifest = {
+            "name": name,
+            "project_name": project.name,
+            "created_at": utc_now(),
+            "created_by": created_by or self._actor_id,
+            "n_cases": len(rows),
+            "n_included": len(included),
+            "n_excluded": len(excluded),
+            "n_patients": len({r["patient_group"] for r in included if r["patient_group"]}),
+            "splits": self.split_summary(project_id),
+            "near_duplicates": self.find_near_duplicates(project_id),
+            "excluded_without_a_reason": [
+                r["case_pseudonym"] for r in excluded if not r["exclusion_reason"]
+            ],
+            "inclusion_rules": inclusion_rules,
+            "notes": notes,
+            "schema_version": schema_dict.get("version", ""),
+        }
+        manifest["patient_independent"] = manifest["splits"]["patient_independent"]
+        manifest["contains_near_duplicates"] = bool(manifest["near_duplicates"])
+
+        # Over the frozen schema and the case list, so that a later claim to be
+        # this release can be checked rather than taken on trust.
+        payload = _json_mod.dumps(
+            {"schema": schema_dict, "cases": rows}, sort_keys=True, default=str
+        )
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+        release_id = new_id("rel_")
+        with self.db.transaction() as c:
+            c.execute(
+                "INSERT INTO dataset_releases (id, project_id, name, created_by,"
+                " created_at, schema_json, schema_version, inclusion_rules, notes,"
+                " manifest_json, sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    release_id, project_id, name, manifest["created_by"],
+                    manifest["created_at"], _json(schema_dict),
+                    manifest["schema_version"], inclusion_rules, notes,
+                    _json(manifest), digest,
+                ),
+            )
+            for r in rows:
+                c.execute(
+                    "INSERT INTO dataset_release_cases (release_id, case_id,"
+                    " case_pseudonym, patient_group, split, included,"
+                    " exclusion_reason, source_sha256, perceptual_hash)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        release_id, r["case_id"], r["case_pseudonym"],
+                        r["patient_group"], r["split"], int(r["included"]),
+                        r["exclusion_reason"], r["source_sha256"],
+                        r["perceptual_hash"],
+                    ),
+                )
+            self.log(
+                AuditEvent.EXPORT_COMPLETED if hasattr(AuditEvent, "EXPORT_COMPLETED")
+                else AuditEvent.SCHEMA_CHANGED,
+                "dataset_release", release_id,
+                after={"name": name, "sha256": digest},
+                detail=(
+                    f"Dataset release {name}: {len(included)} of {len(rows)} cases, "
+                    f"{manifest['n_patients']} patients, patient independent "
+                    f"{manifest['patient_independent']}."
+                ),
+                project_id=project_id, conn=c,
+            )
+
+        manifest["id"] = release_id
+        manifest["sha256"] = digest
+        return manifest
+
+    def get_dataset_release(self, release_id: str) -> dict | None:
+        """A frozen release, with the schema exactly as it stood."""
+        row = self.db.query_one(
+            "SELECT * FROM dataset_releases WHERE id = ?", (release_id,)
+        )
+        if row is None:
+            return None
+        out = dict(row)
+        out["schema"] = _loads(row["schema_json"], {})
+        out["manifest"] = _loads(row["manifest_json"], {})
+        out["cases"] = [
+            dict(r) for r in self.db.query(
+                "SELECT * FROM dataset_release_cases WHERE release_id = ?"
+                " ORDER BY case_pseudonym",
+                (release_id,),
+            )
+        ]
+        return out
+
+    def list_dataset_releases(self, project_id: str = "") -> list:
+        sql = "SELECT id, project_id, name, created_at, created_by, sha256 FROM dataset_releases"
+        params: tuple = ()
+        if project_id:
+            sql += " WHERE project_id = ?"
+            params = (project_id,)
+        sql += " ORDER BY created_at DESC, id ASC"
+        return [dict(r) for r in self.db.query(sql, params)]
+
+    def find_near_duplicates(self, project_id: str = "", threshold: int = 8) -> list:
+        """Pairs of cases whose images are the same radiograph (FR 070).
+
+        A checksum catches the same file twice. It does not catch the same
+        study exported again at a different window, resaved as PNG, or cropped
+        by a pixel, and those are the copies that leak across a dataset split:
+        a model meets one in training and its twin in the test set, and the
+        test metric stops meaning anything.
+
+        The default threshold was chosen against real panoramic radiographs. A
+        re-export of one study scores nought or one; the closest pair of
+        genuinely different patients scored fifteen. Eight sits between them
+        with room on both sides.
+        """
+        from ..io.image import hamming_distance
+
+        sql = (
+            "SELECT id, pseudonym, patient_group, split, perceptual_hash,"
+            " source_sha256 FROM cases"
+            " WHERE archived = 0 AND perceptual_hash != ''"
+        )
+        params: tuple = ()
+        if project_id:
+            sql += " AND project_id = ?"
+            params = (project_id,)
+        sql += " ORDER BY imported_at ASC, id ASC"
+
+        rows = [dict(r) for r in self.db.query(sql, params)]
+        pairs: list = []
+        for i, a in enumerate(rows):
+            for b in rows[i + 1:]:
+                distance = hamming_distance(a["perceptual_hash"], b["perceptual_hash"])
+                if distance > threshold:
+                    continue
+                pairs.append(
+                    {
+                        "case_a": a["id"], "pseudonym_a": a["pseudonym"],
+                        "case_b": b["id"], "pseudonym_b": b["pseudonym"],
+                        "distance": distance,
+                        "identical_file": a["source_sha256"] == b["source_sha256"],
+                        "same_patient_group": a["patient_group"] == b["patient_group"],
+                        "splits": sorted({a["split"] or "unassigned",
+                                          b["split"] or "unassigned"}),
+                        # The combination that actually leaks: the same
+                        # radiograph, recorded as two different patients, on
+                        # opposite sides of a split.
+                        "leaks_across_split": (
+                            a["patient_group"] != b["patient_group"]
+                            and a["split"] != b["split"]
+                            and bool(a["split"]) and bool(b["split"])
+                        ),
+                    }
+                )
+        return pairs
+
+    def set_exclusion_reason(self, case_id: str, reason: str) -> None:
+        """Say why a case is not in the dataset (FR 071).
+
+        An excluded case with no reason cannot be told apart from an oversight,
+        and a dataset that cannot account for what it left out cannot be
+        audited.
+        """
+        case = self.get_case(case_id)
+        if case is None:
+            raise KeyError(f"No case with identifier {case_id}")
+        with self.db.transaction() as c:
+            c.execute(
+                "UPDATE cases SET exclusion_reason = ? WHERE id = ?",
+                (reason, case_id),
+            )
+            self.log(
+                AuditEvent.CASE_ARCHIVED, "case", case_id,
+                before={"exclusion_reason": case.exclusion_reason},
+                after={"exclusion_reason": reason},
+                detail=f"Exclusion reason: {reason}" if reason else
+                       "Exclusion reason cleared.",
+                project_id=case.project_id, case_id=case_id, conn=c,
+            )
+
     def split_leakage(self, project_id: str = "") -> list:
         """Patient groups whose images sit in more than one dataset split.
 
@@ -719,11 +945,22 @@ class Repository:
         )
 
     def archive_case(self, case_id: str, reason: str = "") -> None:
+        """Take a case out of the dataset, and say why (FR 071).
+
+        The reason used to reach the audit log and stop there, so a dataset
+        release could list what it excluded but not what was wrong with it. An
+        exclusion without a reason cannot be told apart from an oversight.
+        """
         case = self.get_case(case_id)
         with self.db.transaction() as c:
-            c.execute("UPDATE cases SET archived = 1 WHERE id = ?", (case_id,))
+            c.execute(
+                "UPDATE cases SET archived = 1, exclusion_reason = ? WHERE id = ?",
+                (reason, case_id),
+            )
             self.log(
                 AuditEvent.CASE_ARCHIVED, "case", case_id, detail=reason or "Case archived.",
+                before={"exclusion_reason": case.exclusion_reason if case else ""},
+                after={"archived": True, "exclusion_reason": reason},
                 project_id=case.project_id if case else "", case_id=case_id, conn=c,
             )
 
@@ -762,6 +999,12 @@ class Repository:
             imported_by=row["imported_by"], imported_at=row["imported_at"],
             duplicate_target=bool(row["duplicate_target"]),
             archived=bool(row["archived"]),
+            perceptual_hash=(
+                row["perceptual_hash"] if "perceptual_hash" in row.keys() else ""
+            ),
+            exclusion_reason=(
+                row["exclusion_reason"] if "exclusion_reason" in row.keys() else ""
+            ),
         )
 
     # -- annotation sets -----------------------------------------------------
