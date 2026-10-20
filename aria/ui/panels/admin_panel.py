@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core.audit import AuditEvent
 from ...core.models import Project, Role, utc_now
 from ...core.schema import LABEL_CLASSES, ProjectSchema, ThresholdRule
 from ...io.deident import BUILTIN_PROFILES
@@ -472,10 +473,25 @@ class AdminPanel(QWidget):
         )
         body.addWidget(self.approve_calibration_button)
 
+        self.guest_access = QCheckBox("Allow guest access on this workstation", self)
+        body.addWidget(self.guest_access)
+        guest_note = QLabel(
+            "Anyone at this workstation can then open ARIA as a guest, without a "
+            "password. A guest sees the case list and the images, without "
+            "anybody's annotations, and cannot annotate, change, export or "
+            "administer anything. Guest sessions are recorded in the audit "
+            "history.",
+            self,
+        )
+        guest_note.setWordWrap(True)
+        guest_note.setProperty("dim", True)
+        body.addWidget(guest_note)
+
         self.add_user_button.clicked.connect(self._add_user)
         self.reset_password_button.clicked.connect(self._reset_password)
         self.toggle_active_button.clicked.connect(self._toggle_active)
         self.approve_calibration_button.clicked.connect(self._approve_calibration)
+        self.guest_access.toggled.connect(self._set_guest_access)
 
         self.scroll.add_section(self.users_section)
 
@@ -524,6 +540,22 @@ class AdminPanel(QWidget):
             f"rather than by email.",
         )
         self._refresh_users()
+
+    def _set_guest_access(self, allowed: bool) -> None:
+        settings = self.controller.settings
+        if not self.controller.can(Permission.MANAGE_USERS) or settings.allow_guest_access == allowed:
+            return
+        settings.allow_guest_access = allowed
+        self.controller.config.save()
+        self.controller.repo.log(
+            AuditEvent.POLICY_CHANGED, "settings", "allow_guest_access",
+            before={"allow_guest_access": not allowed},
+            after={"allow_guest_access": allowed},
+            detail=(
+                "Guest access turned on. The sign in window now offers to "
+                "continue as a guest." if allowed else "Guest access turned off."
+            ),
+        )
 
     def _toggle_active(self) -> None:
         user = self._selected_user()
@@ -908,3 +940,8 @@ class AdminPanel(QWidget):
             self.save_dicom_button,
         ):
             widget.setEnabled(allowed)
+
+        self.guest_access.blockSignals(True)
+        self.guest_access.setChecked(bool(self.controller.settings.allow_guest_access))
+        self.guest_access.blockSignals(False)
+        self.guest_access.setEnabled(self.controller.can(Permission.MANAGE_USERS))

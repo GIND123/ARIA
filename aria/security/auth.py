@@ -7,7 +7,17 @@ each digest so they can be raised later without invalidating existing accounts.
 
 Permissions are least privilege and are checked in one place. There are two
 roles: an annotator does the work on a case from import through to export, and
-an administrator does that and runs the study as well.
+an administrator does that and runs the study as well. A guest, where an
+administrator allows one, is not an account at all and can only look.
+
+A forgotten password has three ways back, in the order to try them:
+
+1. the account's recovery key, which proves who is asking and needs nobody else,
+2. an administrator, who sets a temporary password from Administration, Accounts,
+3. the workstation reset on the command line, for when there is neither. It
+   cannot ask for proof, because whoever can run programs as this computer's
+   account can already open the database file. What it adds is a record of the
+   reset, and that the reset is never silent: the old password stops working.
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
+from ..core.audit import AuditEvent
 from ..core.models import Role, User, utc_now
 
 #: scrypt work factors. Raising N later is safe: existing digests carry the
@@ -83,12 +94,30 @@ STUDY_ADMINISTRATION = {
 #: it here.
 _ANNOTATOR = {p for p in Permission if p not in STUDY_ADMINISTRATION}
 
+#: A guest looks at the case list and the images, and that is all. Written out
+#: rather than derived, the opposite of the annotator, so that a capability
+#: added later stays out of a guest's reach until somebody decides otherwise.
+GUEST_PERMISSIONS = frozenset({Permission.VIEW_CASES, Permission.VIEW_IMAGE})
+
 ROLE_PERMISSIONS: dict = {
     Role.ANNOTATOR: set(_ANNOTATOR),
     #: An administrator does everything an annotator does, and runs the study
     #: as well.
     Role.ADMIN: set(_ANNOTATOR) | STUDY_ADMINISTRATION,
+    Role.GUEST: set(GUEST_PERMISSIONS),
 }
+
+#: The identifier every guest session acts under in the audit history. No
+#: account row carries it.
+GUEST_ID = "usr_guest"
+
+
+def guest_user() -> User:
+    """The identity a guest session runs as. Never stored as an account."""
+    return User(
+        id=GUEST_ID, username="guest", display_name="Guest",
+        role=Role.GUEST, pseudonym="GUEST",
+    )
 
 
 def permissions_for(role: str) -> set:
@@ -165,6 +194,30 @@ def generate_temporary_password(length: int = 14) -> str:
     """A readable one time password for a new account."""
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+#: Capitals and digits, without the ones easily misread for each other (I, L,
+#: O, 0 and 1), so a key written on paper and typed back in reads the same.
+RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def generate_recovery_key(groups: int = 5, group_length: int = 4) -> str:
+    """A recovery key such as ``K7QM-3XRP-9DWB-HN2T-F4ZC``.
+
+    Twenty characters from 31 is about 99 bits, far past guessing at the rate a
+    memory hard digest allows. That is why a wrong key does not count towards
+    the lockout the way a wrong password does: the lockout would protect
+    nothing, and would let anyone lock the owner out by typing nonsense.
+    """
+    return "-".join(
+        "".join(secrets.choice(RECOVERY_ALPHABET) for _ in range(group_length))
+        for _ in range(groups)
+    )
+
+
+def normalise_recovery_key(text: str) -> str:
+    """The key as stored, whatever case, spaces or dashes it was typed with."""
+    return "".join(c for c in text.upper() if c.isalnum())
 
 
 # ---------------------------------------------------------------------------
@@ -337,13 +390,171 @@ class AuthService:
 
     def reset_password(self, admin: User, target: User) -> str:
         require(admin, Permission.MANAGE_USERS)
-        temporary = generate_temporary_password()
-        target.password_hash, target.password_salt = hash_password(temporary)
-        target.must_change_password = True
-        target.failed_logins = 0
-        target.locked_until = None
+        temporary = self._set_temporary_password(target)
         self.repo.update_user(target, detail=f"Password reset by {admin.username}.")
+        self.repo.log(
+            AuditEvent.PASSWORD_RESET, "user", target.id,
+            detail=(
+                f"The password for {target.username} was reset by the "
+                f"administrator {admin.username}. A new one must be chosen at "
+                f"the next sign in."
+            ),
+        )
         return temporary
+
+    def reset_password_at_workstation(self, username: str, operator: str) -> tuple:
+        """Reset a password for whoever is at this workstation.
+
+        For when the account has no recovery key and there is no other
+        administrator to reset it. It asks for no proof because it cannot: the
+        person running it already has the database file. Returns the account
+        and a temporary password that must be changed at the next sign in.
+        """
+        user = self.repo.get_user_by_username(username.strip())
+        if user is None:
+            raise LookupError(f"There is no account named {username.strip()!r}.")
+        temporary = self._set_temporary_password(user)
+        self.repo.update_user(
+            user, detail=f"Password reset at the workstation by {operator}."
+        )
+        self.repo.log(
+            AuditEvent.PASSWORD_RESET, "user", user.id,
+            detail=(
+                f"The password for {user.username} was reset from the command "
+                f"line on this workstation, by the computer account {operator}. "
+                f"A new one must be chosen at the next sign in."
+            ),
+        )
+        return user, temporary
+
+    @staticmethod
+    def _set_temporary_password(user: User) -> str:
+        temporary = generate_temporary_password()
+        user.password_hash, user.password_salt = hash_password(temporary)
+        user.must_change_password = True
+        user.failed_logins = 0
+        user.locked_until = None
+        return temporary
+
+    # -- recovery keys -------------------------------------------------------
+
+    def issue_recovery_key(self, user: User, key: str | None = None) -> str:
+        """Give an account a new recovery key, and return it this once.
+
+        Only a digest is kept, so the key cannot be shown again. A new key
+        replaces the old one, which stops working immediately. ``key`` is for
+        setup, which shows the key before the account exists to hold it.
+        """
+        if user.is_guest:
+            raise ValueError("A guest has no account to recover.")
+        key = key or generate_recovery_key()
+        user.recovery_hash, user.recovery_salt = hash_password(normalise_recovery_key(key))
+        user.recovery_created_at = utc_now()
+        self.repo.update_user(user, detail="Recovery key issued.")
+        self.repo.log(
+            AuditEvent.RECOVERY_KEY_ISSUED, "user", user.id,
+            detail=(
+                f"A recovery key was issued for {user.username}. Any earlier "
+                f"key for this account no longer works."
+            ),
+        )
+        return key
+
+    def reset_with_recovery_key(self, username: str, key: str, new_password: str) -> tuple:
+        """Set a new password for whoever holds the account's recovery key.
+
+        Returns the account and its next recovery key. The key that was used is
+        spent, so a written down key that somebody else later finds is useless
+        once its owner has used it.
+        """
+        problems = self.settings.validate_password(new_password)
+        if problems:
+            raise ValueError(" ".join(problems))
+
+        refused = "The username or recovery key is not correct."
+        typed = normalise_recovery_key(key)
+        user = self.repo.get_user_by_username(username.strip())
+        if user is None or not user.has_recovery_key:
+            # The same time and the same words as a wrong key, so whether an
+            # account exists, or has a key, is not learned by trying.
+            hash_password(typed or "-", salt=b"\x00" * 32)
+            self.repo.log(
+                AuditEvent.LOGIN_FAILURE, "user", user.id if user else "",
+                detail=(
+                    f"Password reset refused for {username.strip()!r}: "
+                    + ("no such account." if user is None else "the account has no recovery key.")
+                ),
+            )
+            raise AuthenticationError(refused)
+
+        if not user.active:
+            self.repo.log(
+                AuditEvent.LOGIN_FAILURE, "user", user.id,
+                detail="Password reset attempt on a deactivated account.",
+            )
+            raise AuthenticationError(
+                "This account has been deactivated. Contact the project administrator."
+            )
+
+        if not verify_password(typed, user.recovery_hash, user.recovery_salt):
+            self.repo.log(
+                AuditEvent.LOGIN_FAILURE, "user", user.id,
+                detail=(
+                    f"Password reset refused for {user.username}: the recovery "
+                    f"key did not match."
+                ),
+            )
+            raise AuthenticationError(refused)
+
+        user.password_hash, user.password_salt = hash_password(new_password)
+        user.must_change_password = False
+        # A correct key outranks a lockout: it is stronger proof than the
+        # password the lockout exists to protect.
+        user.failed_logins = 0
+        user.locked_until = None
+        next_key = generate_recovery_key()
+        user.recovery_hash, user.recovery_salt = hash_password(normalise_recovery_key(next_key))
+        user.recovery_created_at = utc_now()
+
+        # Recorded against the account itself, since holding its key is what
+        # proved who was asking. Nobody is signed in yet, so the actor is
+        # cleared again afterwards and a failed sign in that follows is not
+        # put down to this account.
+        self.repo.set_actor(user)
+        try:
+            self.repo.update_user(
+                user, detail="Password reset with the account's recovery key."
+            )
+            self.repo.log(
+                AuditEvent.PASSWORD_RESET, "user", user.id,
+                detail=(
+                    f"The password for {user.username} was reset with its "
+                    f"recovery key. That key is spent and a new one was issued."
+                ),
+            )
+        finally:
+            self.repo.set_actor(None)
+        return user, next_key
+
+    # -- guests --------------------------------------------------------------
+
+    def sign_in_as_guest(self) -> User:
+        """Start a guest session, where the policy allows one."""
+        if not self.settings.allow_guest_access:
+            raise AuthenticationError(
+                "Guest access is turned off on this workstation. An "
+                "administrator can turn it on in Administration, Accounts."
+            )
+        guest = guest_user()
+        self.repo.set_actor(guest)
+        self.repo.log(
+            AuditEvent.GUEST_SESSION_STARTED, "user", guest.id,
+            detail=(
+                "A guest session started. A guest can look at cases and images "
+                "and cannot change anything."
+            ),
+        )
+        return guest
 
     def start_session(self, user: User) -> Session:
         return Session(

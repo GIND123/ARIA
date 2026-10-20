@@ -432,10 +432,13 @@ class TestPermissions:
     """
 
     def test_there_are_two_roles(self):
+        """Two roles an account can hold. A guest is a session without an
+        account, so it has a name but is never offered for an account."""
         from aria.core.models import Role
 
         assert Role.ALL == (Role.ANNOTATOR, Role.ADMIN)
-        assert len(Role.DISPLAY) == 2
+        assert Role.GUEST not in Role.ALL
+        assert set(Role.DISPLAY) == set(Role.ALL) | {Role.GUEST}
 
     def test_an_annotator_does_the_whole_job_on_a_case(self):
         """The report behind this: a case could be opened and worked on, and
@@ -498,7 +501,7 @@ class TestPermissions:
             assert role in ROLE_DESCRIPTIONS, f"{role} has no description"
             assert role in ROLE_PERMISSIONS, f"{role} has no permissions"
         assert set(ROLE_DESCRIPTIONS) == set(Role.ALL)
-        assert set(ROLE_PERMISSIONS) == set(Role.ALL)
+        assert set(ROLE_PERMISSIONS) == set(Role.ALL) | {Role.GUEST}
 
     def test_require_explains_the_refusal(self, annotator):
         from aria.security.auth import Permission, require

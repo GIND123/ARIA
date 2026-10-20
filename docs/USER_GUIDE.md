@@ -46,9 +46,14 @@ requirement deliberately, and that choice is recorded.
 
 **It creates your account.** Everything you do in ARIA is recorded against an
 account, which is what makes the history meaningful. The password is stored as a
-memory hard digest, never as text, so there is no way to recover it. Create a
-second administrator account afterwards, so that a forgotten password does not
-lock you out of your own study.
+memory hard digest, never as text, so ARIA cannot tell you a forgotten one.
+
+**It gives you a recovery key.** The next page shows a key like
+`K7QM-3XRP-9DWB-HN2T-F4ZC`, which resets the password if you ever forget it.
+It is shown only once, so copy it into a password manager or save it and file it
+somewhere other people cannot read. Setup waits until you tick that you have
+kept it. A second administrator account, added afterwards, is a further way back
+in.
 
 This account is an administrator, which means it can do everything: import
 images, annotate and measure them, export the results, and add further
@@ -70,6 +75,53 @@ administrator has configured, the account locks for a set period.
 
 If you were given a temporary password you will be asked to change it before you
 can continue.
+
+If your account has no recovery key, ARIA offers to create one after you sign
+in, and keeps offering until there is one. File, Change password and File, New
+recovery key are there whenever you want them; a new key replaces the old one,
+which stops working.
+
+### Forgotten your password
+
+There are three ways back in. Try them in this order.
+
+1. **Your recovery key.** Choose **Forgot password?** in the sign in window,
+   enter your username, the recovery key and a new password. Case, spaces and
+   dashes in the key do not matter. The key is then spent and ARIA shows you
+   its replacement, which you keep in the same way. A correct key also lifts a
+   lockout from too many failed sign ins.
+2. **Another administrator.** Administration, Accounts, Reset password sets a
+   temporary password, which you change at your next sign in.
+3. **The workstation reset**, when there is no key and no other administrator.
+   Anyone at this workstation can run it from a terminal, and the Forgot
+   password? window shows the exact command with a Copy button:
+
+   ```
+   aria --reset-password yourname
+   ```
+
+   It prints a temporary password (in a packaged build without a console it
+   shows it in a window instead), and you choose a new password at the next
+   sign in. Run it without a name to list the accounts.
+
+   It asks for no proof because it cannot: whoever can run programs as this
+   computer's account can already open the database file. What it adds is that
+   the reset is recorded in the audit history, with the computer account that
+   made it, and that it is never silent, because the old password stops
+   working.
+
+### Signing in as a guest
+
+Where an administrator has turned guest access on, the sign in window also
+offers **Continue as guest**. A guest needs no password and can do very little:
+it sees the case list and the images, with nobody's annotations, and can zoom,
+pan and adjust the display. It cannot annotate, calibrate, import, export,
+review, open the patient factors, change preferences or back up the database,
+and whatever it adjusts is not kept. Guest sessions, and every case a guest
+opens, are recorded in the audit history.
+
+A guest is not a third role. It is a session without an account, and no account
+can be given it.
 
 ### What each role can do
 
@@ -687,7 +739,9 @@ name of the clinician who approved it. Its outcome is always labelled as a
 screening rule, never as a diagnosis.
 
 **Accounts** creates users, resets passwords and records that an annotator has
-completed the calibration set.
+completed the calibration set. **Allow guest access on this workstation** turns
+on Continue as guest in the sign in window; it is off until you turn it on, and
+turning it on or off is recorded.
 
 **Privacy profile** chooses the deidentification profile and lists terms the
 institution declares prohibited, which every export is scanned for.
@@ -723,6 +777,9 @@ Uninstalling ARIA does not remove annotation data.
 
 ## When something goes wrong
 
+**A forgotten password** has three ways back, described under
+[Forgotten your password](#forgotten-your-password).
+
 **Tools, Run diagnostics** runs the self tests against the installed code and
 reports what each one checked. Save the report and include it when asking for
 help.
@@ -747,6 +804,7 @@ aria --self-test                 run the self tests
 aria --system-check              check this workstation
 aria --verify-bundle PATH        verify a training bundle
 aria --verify-audit              verify the audit chain
+aria --reset-password [NAME]     reset a forgotten password, or list accounts
 aria --version                   print the version block
 ```
 

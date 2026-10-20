@@ -16,7 +16,7 @@ import sys
 #: Flags handled without opening the interface.
 HEADLESS_FLAGS = {
     "--self-test", "--system-check", "--verify-bundle", "--verify-audit",
-    "--version", "-v", "--help", "-h",
+    "--reset-password", "--version", "-v", "--help", "-h",
 }
 
 

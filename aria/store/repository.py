@@ -230,8 +230,9 @@ class Repository:
                 "INSERT INTO users (id, username, display_name, role, pseudonym,"
                 " password_hash, password_salt, active, created_at, last_login_at,"
                 " calibration_passed, calibration_passed_at, calibration_approved_by,"
-                " must_change_password, failed_logins, locked_until)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " must_change_password, failed_logins, locked_until,"
+                " recovery_hash, recovery_salt, recovery_created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     user.id, user.username, user.display_name, user.role,
                     user.pseudonym or f"ANN-{user.id[-6:].upper()}",
@@ -239,6 +240,7 @@ class Repository:
                     user.created_at, user.last_login_at, int(user.calibration_passed),
                     user.calibration_passed_at, user.calibration_approved_by,
                     int(user.must_change_password), user.failed_logins, user.locked_until,
+                    user.recovery_hash, user.recovery_salt, user.recovery_created_at,
                 ),
             )
             self.log(
@@ -274,14 +276,16 @@ class Repository:
                 " password_hash=?, password_salt=?, active=?, last_login_at=?,"
                 " calibration_passed=?, calibration_passed_at=?,"
                 " calibration_approved_by=?, must_change_password=?, failed_logins=?,"
-                " locked_until=? WHERE id=?",
+                " locked_until=?, recovery_hash=?, recovery_salt=?,"
+                " recovery_created_at=? WHERE id=?",
                 (
                     user.username, user.display_name, user.role, user.pseudonym,
                     user.password_hash, user.password_salt, int(user.active),
                     user.last_login_at, int(user.calibration_passed),
                     user.calibration_passed_at, user.calibration_approved_by,
                     int(user.must_change_password), user.failed_logins,
-                    user.locked_until, user.id,
+                    user.locked_until, user.recovery_hash, user.recovery_salt,
+                    user.recovery_created_at, user.id,
                 ),
             )
             event = AuditEvent.USER_UPDATED
@@ -303,6 +307,9 @@ class Repository:
 
     @staticmethod
     def _row_to_user(row) -> User:
+        # A file opened read only is not migrated, so on one written by an
+        # earlier build the recovery columns are not there to read.
+        recovery = "recovery_hash" in row.keys()
         return User(
             id=row["id"], username=row["username"], display_name=row["display_name"],
             role=row["role"], pseudonym=row["pseudonym"],
@@ -315,6 +322,9 @@ class Repository:
             must_change_password=bool(row["must_change_password"]),
             failed_logins=int(row["failed_logins"] or 0),
             locked_until=row["locked_until"],
+            recovery_hash=row["recovery_hash"] if recovery else "",
+            recovery_salt=row["recovery_salt"] if recovery else "",
+            recovery_created_at=row["recovery_created_at"] if recovery else None,
         )
 
     # -- projects ------------------------------------------------------------
@@ -1437,6 +1447,24 @@ class Repository:
             annotations=self.list_annotations(aset.id),
             categorical=self.list_grades(aset.id),
             quality_flags=self.list_quality_flags(aset.id),
+        )
+
+    def load_case_for_viewing(self, case_id: str, kind: str = SetKind.PRIMARY) -> CaseData:
+        """A case with nobody's annotations, for a guest to look at.
+
+        Nothing is created. ``load_case_data`` makes the caller an annotation
+        set on first open, which for a guest would leave an empty set behind on
+        every case looked at. The set here exists only in memory, and none of
+        the stored sets is shown, because one still blinded is not a guest's to
+        read and one finished is attributed to the person who made it.
+        """
+        case = self.get_case(case_id)
+        if case is None:
+            raise KeyError(f"No case with identifier {case_id}")
+        return CaseData(
+            case=case,
+            annotation_set=AnnotationSet(case_id=case_id, kind=kind),
+            annotations=[], categorical=[], quality_flags=[],
         )
 
     def load_set_data(self, set_id: str) -> CaseData | None:

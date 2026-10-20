@@ -1,4 +1,8 @@
-"""Sign in, and the forced password change that follows a reset."""
+"""Sign in, the ways back from a forgotten password, and guest access.
+
+The sign in window offers a reset with the account's recovery key, and, where an
+administrator allows it, a guest session that can look and change nothing.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QVBoxLayout,
 )
 
@@ -18,6 +23,8 @@ from ...security.auth import AccountLockedError, AuthenticationError, AuthServic
 from ...version import APP_LONG_NAME, APP_NAME, APP_VERSION
 from ..icons import application_icon
 from ..theme import PALETTE
+from ..widgets.common import make_button
+from .recovery_dialog import RecoveryKeyDialog, ResetPasswordDialog
 
 
 class LoginDialog(QDialog):
@@ -58,6 +65,17 @@ class LoginDialog(QDialog):
         form.addRow("Password", self.password)
         layout.addLayout(form)
 
+        forgot_row = QHBoxLayout()
+        forgot_row.addStretch(1)
+        self.forgot_button = make_button(
+            "Forgot password?", "lock",
+            tooltip="Reset the password with the account's recovery key.",
+            parent=self,
+        )
+        self.forgot_button.setAutoDefault(False)
+        forgot_row.addWidget(self.forgot_button)
+        layout.addLayout(forgot_row)
+
         self.message = QLabel("", self)
         self.message.setWordWrap(True)
         self.message.setVisible(False)
@@ -78,7 +96,24 @@ class LoginDialog(QDialog):
         buttons.button(QDialogButtonBox.Ok).setProperty("accent", True)
         buttons.accepted.connect(self._attempt)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+
+        # Offered only where an administrator has turned guest access on.
+        self.guest_button = make_button(
+            "Continue as guest", "visible",
+            tooltip=(
+                "Look at cases and images without an account. A guest cannot "
+                "annotate, change or export anything."
+            ),
+            parent=self,
+        )
+        self.guest_button.setAutoDefault(False)
+        self.guest_button.setVisible(bool(config.settings.allow_guest_access))
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.guest_button)
+        button_row.addStretch(1)
+        button_row.addWidget(buttons)
+        layout.addLayout(button_row)
 
         version = QLabel(f"Version {APP_VERSION}", self)
         version.setProperty("dim", True)
@@ -88,6 +123,8 @@ class LoginDialog(QDialog):
         self.username.setFocus()
         self.password.returnPressed.connect(self._attempt)
         self.username.returnPressed.connect(lambda: self.password.setFocus())
+        self.forgot_button.clicked.connect(self._forgot_password)
+        self.guest_button.clicked.connect(self._continue_as_guest)
 
     def _show_message(self, text: str, level: str = "danger") -> None:
         colour = {"danger": PALETTE.danger, "warn": PALETTE.warning, "ok": PALETTE.success}
@@ -121,7 +158,51 @@ class LoginDialog(QDialog):
                 )
                 return
 
+        if not user.has_recovery_key:
+            self._offer_recovery_key(user)
+
         self.user = user
+        self.accept()
+
+    def _offer_recovery_key(self, user) -> None:
+        """Offer a recovery key to an account that has none.
+
+        Asked at every sign in until there is one, because the alternative is
+        an account that only an administrator can get back into.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("No recovery key")
+        box.setText("This account has no recovery key.")
+        box.setInformativeText(
+            "A recovery key resets a forgotten password without an "
+            "administrator. It is shown once, for you to copy or save."
+        )
+        create = box.addButton("Create a recovery key", QMessageBox.AcceptRole)
+        box.addButton("Not now", QMessageBox.RejectRole)
+        box.setDefaultButton(create)
+        box.exec()
+        if box.clickedButton() is create:
+            key = self.service.issue_recovery_key(user)
+            RecoveryKeyDialog(key, user.username, self).exec()
+
+    def _forgot_password(self) -> None:
+        dialog = ResetPasswordDialog(self.service, self.username.text().strip(), self)
+        if dialog.exec() != QDialog.Accepted or dialog.user is None:
+            return
+        # The key just used is spent, so the next one has to be seen now.
+        RecoveryKeyDialog(dialog.new_key, dialog.user.username, self).exec()
+        self.username.setText(dialog.user.username)
+        self.password.clear()
+        self.password.setFocus()
+        self._show_message("The password was reset. Sign in with the new one.", "ok")
+
+    def _continue_as_guest(self) -> None:
+        try:
+            self.user = self.service.sign_in_as_guest()
+        except AuthenticationError as exc:
+            self._show_message(str(exc))
+            return
         self.accept()
 
 
@@ -148,7 +229,9 @@ class ChangePasswordDialog(QDialog):
 
         explanation = QLabel(
             "This account is using a temporary password. Choose one only you know "
-            "before continuing.",
+            "before continuing."
+            if current_password
+            else "Enter the current password, then the new one twice.",
             self,
         )
         explanation.setWordWrap(True)
