@@ -43,11 +43,11 @@ if (-not (Test-Path $VenvPython)) { Fail "The build environment was not created.
 if ($LASTEXITCODE -ne 0) { Fail "Dependencies could not be installed." }
 
 Step "Recording third party licences"
-& $VenvPython -m pip install --quiet pip-licenses 2>$null
-if ($LASTEXITCODE -eq 0) {
-    & $VenvPython -m piplicenses --format=plain --with-urls `
-        --output-file (Join-Path $Root "third_party_licences.txt") 2>$null
-}
+# Written from the list of what the bundle actually ships, not from a dump of
+# whatever is installed here. A dump names build tools that never reach the
+# client, and can leave out something that does.
+& $VenvPython (Join-Path $Root "scripts\write_licences.py") --strict
+if ($LASTEXITCODE -ne 0) { Fail "The third party licence notice is incomplete." }
 
 Step "Generating icon files"
 & $VenvPython (Join-Path $Root "scripts\make_icons.py")

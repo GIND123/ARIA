@@ -44,6 +44,15 @@ EXCLUDED_OTHER = [
     "tkinter", "matplotlib", "scipy", "pandas", "IPython", "jupyter",
     "notebook", "pytest", "setuptools", "pip", "PyQt5", "PyQt6", "wx",
     "sphinx", "docutils", "cv2", "torch", "tensorflow", "sklearn",
+    # Hitch hikers from whatever else is installed in the build environment.
+    # ARIA imports none of them, and a clinical workstation should not be
+    # handed code the product does not run. h2, hpack and hyperframe matter
+    # most: they are an HTTP/2 stack, and this product's whole claim is that
+    # there is no network layer, so shipping one contradicts the claim even
+    # if nothing calls it.
+    "h2", "hpack", "hyperframe", "yaml", "jinja2", "markupsafe",
+    "pygments", "tqdm", "wsproto", "requests", "urllib3", "httpx",
+    "httpcore", "certifi", "charset_normalizer", "idna",
 ]
 
 def _importable(name):

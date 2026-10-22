@@ -48,9 +48,10 @@ VENV_PY="$BUILD_VENV/bin/python"
     || fail "Dependencies could not be installed."
 
 step "Recording third party licences"
-"$VENV_PY" -m pip install --quiet pip-licenses 2>/dev/null || true
-"$VENV_PY" -m piplicenses --format=plain --with-urls \
-    --output-file "$ROOT/third_party_licences.txt" 2>/dev/null || true
+# Written from the list of what the bundle actually ships, not from a dump of
+# whatever is installed here. A dump names build tools that never reach the
+# client, and can leave out something that does.
+"$VENV_PY" "$ROOT/scripts/write_licences.py" --strict     || fail "The third party licence notice is incomplete."
 
 step "Generating icon files"
 "$VENV_PY" "$ROOT/scripts/make_icons.py"

@@ -44,7 +44,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
+; Also from the command line, not only from a dialog. A clinical site rolls
+; software out silently, and without this /CURRENTUSER is refused and the
+; deployment simply does nothing, with no log to say why.
+PrivilegesRequiredOverridesAllowed=commandline dialog
 LicenseFile=..\..\LICENSE.txt
 
 [Languages]
