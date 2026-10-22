@@ -237,8 +237,19 @@ def write_indexed_png(path, label: np.ndarray, class_index: dict) -> Path:
             rgb = (255, 255, 255)
         palette[value * 3 : value * 3 + 3] = list(rgb)
 
-    image = Image.fromarray(label, mode="P")
+    # A byte array becomes a greyscale image, and attaching a palette is what
+    # makes it an indexed one. That is the documented route now that fromarray
+    # no longer takes a mode. The check is here because an indexed PNG that is
+    # not indexed reads back as brightness rather than as class numbers, which
+    # is a silently wrong label file rather than a missing one.
+    image = Image.fromarray(label)
     image.putpalette(palette)
+    if image.mode != "P":
+        raise ValueError(
+            f"The mask was written as {image.mode} rather than an indexed "
+            f"image, so its values would be read as brightness instead of as "
+            f"class numbers."
+        )
     image.save(str(path), format="PNG", optimize=True, bits=8)
     return path
 

@@ -80,7 +80,7 @@ def test_ac002_png_loads_without_clipping(sample_png, tmp_path):
     # A 16 bit file keeps its full range rather than being reduced to 8 bits.
     values = np.linspace(0, 65535, 256 * 128).astype(np.uint16).reshape(128, 256)
     path = tmp_path / "sixteen.png"
-    Image.fromarray(values, mode="I;16").save(path)
+    Image.fromarray(values).save(path)
 
     sixteen = read_png(path)
     assert sixteen.meta.bits_stored == 16
@@ -387,6 +387,54 @@ def test_ac006_mask_export_round_trips(repo, calibrated_case, annotator, tmp_pat
     class_map = json.loads(Path(result["classmap"]).read_text(encoding="utf-8"))
     mapped = {entry["index"] for entry in class_map["classes"]}
     assert recovered_indices <= mapped, "A written index is missing from the class map"
+
+
+def test_ac006_the_mask_is_an_indexed_image_not_a_grey_one(
+    repo, calibrated_case, annotator, tmp_path
+):
+    """What the file says it is, read by something other than ARIA.
+
+    The round trip above reads the mask back through ARIA, which would still
+    agree with itself if the file were written as brightness rather than as
+    class numbers. Whoever trains a model on this reads it with their own
+    tools, and to them a greyscale PNG of class indices is a picture of a very
+    dark image. So the mode is asserted directly.
+
+    This is also the shape of a real break: Pillow stopped accepting the mode
+    argument that used to force it, and a build against the newer library
+    failed here rather than shipping label files nobody could use.
+    """
+    from PIL import Image
+
+    from aria.io.exporters.mask_export import build_class_index, write_masks
+
+    data = build_annotation_set(repo, calibrated_case, annotator)
+    shape = (calibrated_case.source.rows, calibrated_case.source.columns)
+    result = write_masks(tmp_path / "masks", data, shape, build_class_index())
+
+    with Image.open(result["mask"]) as mask:
+        assert mask.mode == "P", f"The mask was written as {mask.mode}"
+        palette = mask.getpalette()
+    assert palette, "The mask carries no palette, so its classes have no colours"
+
+
+def test_ac002_the_thumbnail_is_written_as_greyscale(
+    repo, project, admin, importer, sample_png, paths
+):
+    """A thumbnail is a byte per pixel, and has to arrive as one.
+
+    Written at import and read back by the case list. A mode the reader does
+    not expect is a case list full of nothing, which is noticed late.
+    """
+    from PIL import Image
+
+    outcome = importer.import_file(str(sample_png), project.id, imported_by=admin.id)
+    assert outcome.succeeded, outcome.error_message
+
+    thumbnails = sorted(paths.thumbnails_dir.glob("*.png"))
+    assert thumbnails, "No thumbnail was written"
+    with Image.open(thumbnails[0]) as thumb:
+        assert thumb.mode == "L", f"The thumbnail was written as {thumb.mode}"
 
 
 def test_ac006_coco_geometry_matches_source(repo, calibrated_case, annotator):

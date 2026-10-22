@@ -113,7 +113,10 @@ def write_thumbnail(image: ImageData, destination, max_edge: int = 480) -> None:
 
     thumb = make_thumbnail(image, max_edge)
     Path(destination).parent.mkdir(parents=True, exist_ok=True)
-    PILImage.fromarray(thumb, mode="L").save(str(destination), format="PNG", optimize=True)
+    # Pillow takes the mode from the array's dtype; a byte array is
+    # greyscale. It stopped accepting a mode argument, and passing one it
+    # no longer knows about fails the build rather than the thumbnail.
+    PILImage.fromarray(thumb).save(str(destination), format="PNG", optimize=True)
 
 
 def write_working_copy(image: ImageData, destination) -> None:
