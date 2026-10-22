@@ -226,27 +226,27 @@ class Repository:
 
     def create_user(self, user: User) -> User:
         with self.db.transaction() as c:
+            # The columns a password and a recovery key were kept in are
+            # still there, so that a database written by an earlier version
+            # opens unchanged. Nothing is written into them any more, and they
+            # take the empty default the table declares.
             c.execute(
                 "INSERT INTO users (id, username, display_name, role, pseudonym,"
-                " password_hash, password_salt, active, created_at, last_login_at,"
-                " calibration_passed, calibration_passed_at, calibration_approved_by,"
-                " must_change_password, failed_logins, locked_until,"
-                " recovery_hash, recovery_salt, recovery_created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " active, created_at,"
+                " calibration_passed, calibration_passed_at, calibration_approved_by)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     user.id, user.username, user.display_name, user.role,
                     user.pseudonym or f"ANN-{user.id[-6:].upper()}",
-                    user.password_hash, user.password_salt, int(user.active),
-                    user.created_at, user.last_login_at, int(user.calibration_passed),
+                    int(user.active), user.created_at,
+                    int(user.calibration_passed),
                     user.calibration_passed_at, user.calibration_approved_by,
-                    int(user.must_change_password), user.failed_logins, user.locked_until,
-                    user.recovery_hash, user.recovery_salt, user.recovery_created_at,
                 ),
             )
             self.log(
                 AuditEvent.USER_CREATED, "user", user.id,
-                after={"username": user.username, "role": user.role},
-                detail=f"Account {user.username} created with role {user.role}.",
+                after={"username": user.username},
+                detail=f"Profile {user.display_name or user.username} created.",
                 conn=c,
             )
         return user
@@ -273,31 +273,23 @@ class Repository:
         with self.db.transaction() as c:
             c.execute(
                 "UPDATE users SET username=?, display_name=?, role=?, pseudonym=?,"
-                " password_hash=?, password_salt=?, active=?, last_login_at=?,"
-                " calibration_passed=?, calibration_passed_at=?,"
-                " calibration_approved_by=?, must_change_password=?, failed_logins=?,"
-                " locked_until=?, recovery_hash=?, recovery_salt=?,"
-                " recovery_created_at=? WHERE id=?",
+                " active=?, calibration_passed=?, calibration_passed_at=?,"
+                " calibration_approved_by=? WHERE id=?",
                 (
                     user.username, user.display_name, user.role, user.pseudonym,
-                    user.password_hash, user.password_salt, int(user.active),
-                    user.last_login_at, int(user.calibration_passed),
+                    int(user.active), int(user.calibration_passed),
                     user.calibration_passed_at, user.calibration_approved_by,
-                    int(user.must_change_password), user.failed_logins,
-                    user.locked_until, user.recovery_hash, user.recovery_salt,
-                    user.recovery_created_at, user.id,
+                    user.id,
                 ),
             )
             event = AuditEvent.USER_UPDATED
-            if before and before.role != user.role:
-                event = AuditEvent.ROLE_CHANGED
             if before and before.active and not user.active:
                 event = AuditEvent.USER_DEACTIVATED
             self.log(
                 event, "user", user.id,
-                before={"role": before.role, "active": before.active} if before else None,
-                after={"role": user.role, "active": user.active},
-                detail=detail or f"Account {user.username} updated.",
+                before={"name": before.display_name, "active": before.active} if before else None,
+                after={"name": user.display_name, "active": user.active},
+                detail=detail or f"Profile {user.display_name or user.username} updated.",
                 conn=c,
             )
 
@@ -307,24 +299,16 @@ class Repository:
 
     @staticmethod
     def _row_to_user(row) -> User:
-        # A file opened read only is not migrated, so on one written by an
-        # earlier build the recovery columns are not there to read.
-        recovery = "recovery_hash" in row.keys()
+        # Only the columns a profile still carries. A database written while
+        # ARIA had passwords has more of them, and they are left where they
+        # are: unread, and never copied into anything ARIA exports.
         return User(
             id=row["id"], username=row["username"], display_name=row["display_name"],
             role=row["role"], pseudonym=row["pseudonym"],
-            password_hash=row["password_hash"], password_salt=row["password_salt"],
             active=bool(row["active"]), created_at=row["created_at"],
-            last_login_at=row["last_login_at"],
             calibration_passed=bool(row["calibration_passed"]),
             calibration_passed_at=row["calibration_passed_at"],
             calibration_approved_by=row["calibration_approved_by"],
-            must_change_password=bool(row["must_change_password"]),
-            failed_logins=int(row["failed_logins"] or 0),
-            locked_until=row["locked_until"],
-            recovery_hash=row["recovery_hash"] if recovery else "",
-            recovery_salt=row["recovery_salt"] if recovery else "",
-            recovery_created_at=row["recovery_created_at"] if recovery else None,
         )
 
     # -- projects ------------------------------------------------------------

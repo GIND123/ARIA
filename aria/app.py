@@ -5,7 +5,7 @@ The order matters and is deliberate:
 1. logging, so a failure in any later step is recorded,
 2. configuration and paths, so everything else knows where to write,
 3. the database, with migrations applied and a startup backup taken,
-4. first run setup when there is no account yet,
+4. first run setup when there is no profile yet,
 5. sign in,
 6. the main window, and the guided tour when it has not been seen.
 
@@ -196,14 +196,27 @@ def run(argv=None) -> int:
 
     app.setWindowIcon(application_icon())
 
+    # -- the loader ------------------------------------------------------
+    # Opening the database, migrating it, checking it and taking a backup is
+    # several seconds on a study of any size. Without something on screen a
+    # person assumes nothing happened and starts ARIA again, which is how two
+    # copies come to hold the same file.
+    from .ui.splash import SplashScreen
+
+    splash = SplashScreen(total_steps=5)
+    splash.show()
+    app.processEvents()
+
     # -- database --------------------------------------------------------
     from .store.db import open_database
     from .store.repository import Repository
 
+    splash.step("Opening the database")
     try:
         database = open_database(config.paths.database)
     except Exception as exc:
         logger.exception("The database could not be opened")
+        splash.close()
         QMessageBox.critical(
             None, f"{APP_NAME} cannot start",
             f"The database could not be opened.\n\n{exc}\n\n"
@@ -213,6 +226,7 @@ def run(argv=None) -> int:
         )
         return 1
 
+    splash.step("Checking the installation")
     applied = database.migrate(database.schema_version())
     if applied:
         logger.info("Database migrations applied: %s", "; ".join(applied))
@@ -220,6 +234,7 @@ def run(argv=None) -> int:
     integrity = database.integrity_check()
     if not integrity["ok"]:
         logger.error("Database integrity check failed: %s", integrity)
+        splash.hide()
         answer = QMessageBox.warning(
             None, "Database problem",
             "The database did not pass its integrity check.\n\n"
@@ -229,18 +244,26 @@ def run(argv=None) -> int:
         )
         if answer == QMessageBox.Close:
             database.close()
+            splash.close()
             return 1
+        splash.show()
 
+    splash.step("Backing up before any change")
     take_startup_backup(database, config)
     repository = Repository(database)
 
-    # -- first run -------------------------------------------------------
-    from .security.auth import AuthService
+    # -- who is annotating -----------------------------------------------
+    from .core.profile import ActiveProfile, ProfileService, record_profile
 
-    service = AuthService(repository, config.settings)
+    service = ProfileService(repository)
     show_tour_after_setup = False
+    session = None
 
-    if service.bootstrap_needed() or not config.settings.first_run_completed:
+    # The loader steps aside for anything that needs an answer, so that a
+    # window asking a question is never behind one that cannot be moved.
+    splash.hide()
+
+    if not service.any_profile_exists() or not config.settings.first_run_completed:
         from PySide6.QtWidgets import QDialog
 
         from .ui.dialogs.first_run import FirstRunWizard
@@ -252,32 +275,36 @@ def run(argv=None) -> int:
         if wizard.exec() != QDialog.DialogCode.Accepted:
             logger.info("Setup was cancelled")
             database.close()
+            splash.close()
             return 0
-        user = wizard.created_user
+        user = wizard.created_user or service.ensure_default()
         project = wizard.created_project
         show_tour_after_setup = wizard.show_tour
-        session = service.start_session(user)
         repository.set_actor(user)
+        session = ActiveProfile(user)
+        record_profile(repository, user)
+        config.settings.last_profile_id = user.id
+        config.save()
     else:
         from PySide6.QtWidgets import QDialog
 
-        from .ui.dialogs.login_dialog import LoginDialog
+        from .ui.dialogs.profile_dialog import ProfileDialog
 
-        dialog = LoginDialog(repository, config, None)
-        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.user is None:
-            logger.info("Sign in was cancelled")
+        dialog = ProfileDialog(repository, config, None)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.profile is None:
+            logger.info("No profile was chosen")
             database.close()
+            splash.close()
             return 0
-        user = dialog.user
-        session = service.start_session(user)
+        user = dialog.profile
         repository.set_actor(user)
-        if user.is_guest:
-            # Until the window closes the connection refuses every change but
-            # an audit append, so nothing a guest does can reach the study,
-            # whichever panel it is done from.
-            database.refuse_changes()
+        session = ActiveProfile(user)
+        record_profile(repository, user)
         projects = repository.list_projects()
         project = projects[0] if projects else None
+
+    splash.show()
+    app.processEvents()
 
     # -- vault -----------------------------------------------------------
     if config.settings.encrypt_at_rest:
@@ -290,6 +317,7 @@ def run(argv=None) -> int:
             logger.warning("Encryption at rest is unavailable: %s", exc)
 
     # -- main window -----------------------------------------------------
+    splash.step("Building the workspace")
     from .ui.main_window import MainWindow
 
     window = MainWindow(repository, config.paths, config, session)
@@ -297,8 +325,11 @@ def run(argv=None) -> int:
         window.controller.set_project(project)
     window.restore_geometry()
     window._apply_settings()
+
+    splash.step("Ready")
     window.show()
     window.case_browser.reload_projects()
+    splash.finish(window)
 
     if config.settings.last_version_run != APP_VERSION:
         config.settings.last_version_run = APP_VERSION
@@ -316,7 +347,7 @@ def run(argv=None) -> int:
 
         QTimer.singleShot(420, start_tour)
 
-    logger.info("Signed in as %s (%s)", user.username, user.role)
+    logger.info("Annotating as %s", user.display_name or user.username)
     exit_code = app.exec()
 
     try:

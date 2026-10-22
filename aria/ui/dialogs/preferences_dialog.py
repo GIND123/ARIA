@@ -1,9 +1,8 @@
 """Preferences: appearance, viewer, storage, import limits and security policy.
 
-The security page holds the institutional policy settings: session timeout,
-password rules, retention and encryption at rest. They are here rather than in a
-file so an administrator can set them to an approved policy without editing
-configuration by hand.
+The security page holds the institutional policy settings: retention and
+encryption at rest. They are here rather than in a file so they can be set to
+an approved policy without editing configuration by hand.
 """
 
 from __future__ import annotations
@@ -283,41 +282,17 @@ class PreferencesDialog(QDialog):
         form = QFormLayout(page)
         form.setSpacing(9)
 
-        self.session_timeout = QSpinBox(page)
-        self.session_timeout.setRange(0, 480)
-        self.session_timeout.setValue(self.settings.session_timeout_minutes)
-        self.session_timeout.setSuffix(" minutes")
-        self.session_timeout.setSpecialValueText("No timeout")
-        form.addRow("Lock after idle", self.session_timeout)
-
-        self.lock_on_idle = QCheckBox("Enforce the idle timeout", page)
-        self.lock_on_idle.setChecked(self.settings.lock_on_idle)
-        form.addRow("", self.lock_on_idle)
-
-        self.password_length = QSpinBox(page)
-        self.password_length.setRange(6, 64)
-        self.password_length.setValue(self.settings.password_min_length)
-        form.addRow("Minimum password length", self.password_length)
-
-        self.require_mixed = QCheckBox("Require upper and lower case", page)
-        self.require_mixed.setChecked(self.settings.password_require_mixed_case)
-        self.require_digit = QCheckBox("Require a digit", page)
-        self.require_digit.setChecked(self.settings.password_require_digit)
-        self.require_symbol = QCheckBox("Require a symbol", page)
-        self.require_symbol.setChecked(self.settings.password_require_symbol)
-        for box in (self.require_mixed, self.require_digit, self.require_symbol):
-            form.addRow("", box)
-
-        self.max_failed = QSpinBox(page)
-        self.max_failed.setRange(1, 20)
-        self.max_failed.setValue(self.settings.max_failed_logins)
-        form.addRow("Failed sign ins before lockout", self.max_failed)
-
-        self.lockout_minutes = QSpinBox(page)
-        self.lockout_minutes.setRange(1, 1440)
-        self.lockout_minutes.setValue(self.settings.lockout_minutes)
-        self.lockout_minutes.setSuffix(" minutes")
-        form.addRow("Lockout duration", self.lockout_minutes)
+        profiles = QLabel(
+            "ARIA does not sign anybody in. Its data is a file on this "
+            "workstation, so a passphrase on the way in would guard a door in "
+            "a building with no walls, while a forgotten one could shut a "
+            "study out of its own data. Who is annotating is recorded as a "
+            "profile, which is a name: see the File menu to change it.",
+            page,
+        )
+        profiles.setWordWrap(True)
+        profiles.setProperty("dim", True)
+        form.addRow("Profiles", profiles)
 
         self.encrypt = QCheckBox("Encrypt derived content at rest", page)
         self.encrypt.setChecked(self.settings.encrypt_at_rest)
@@ -406,14 +381,6 @@ class PreferencesDialog(QDialog):
         s.max_batch_files = self.max_batch.value()
         s.bundle_compression = self.bundle_compression.value()
 
-        s.session_timeout_minutes = self.session_timeout.value()
-        s.lock_on_idle = self.lock_on_idle.isChecked()
-        s.password_min_length = self.password_length.value()
-        s.password_require_mixed_case = self.require_mixed.isChecked()
-        s.password_require_digit = self.require_digit.isChecked()
-        s.password_require_symbol = self.require_symbol.isChecked()
-        s.max_failed_logins = self.max_failed.value()
-        s.lockout_minutes = self.lockout_minutes.value()
         s.encrypt_at_rest = self.encrypt.isChecked()
         s.retention_days = self.retention.value()
 

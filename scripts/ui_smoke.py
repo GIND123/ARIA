@@ -104,11 +104,11 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from aria.config import Config, Paths, set_config
-    from aria.core.models import Project, Role, User
+    from aria.core.models import Project, User
     from aria.core.schema import MCIGrade, Presence, ProjectSchema, Side
     from aria.store.db import open_database
     from aria.store.repository import Repository
-    from aria.security.auth import AuthService
+    from aria.core.profile import ActiveProfile, ProfileService
 
     tmp = Path(tempfile.mkdtemp(prefix="aria_ui_smoke_"))
     config = Config(
@@ -131,21 +131,15 @@ def main() -> int:
 
     database = open_database(config.paths.database)
     repo = Repository(database)
-    service = AuthService(repo, config.settings)
+    service = ProfileService(repo)
 
-    admin = service.create_account(
-        "smoke_admin", "Smoke Administrator", Role.ADMIN, "SmokeTest-2026", must_change=False
-    )
-    annotator = service.create_account(
-        "smoke_ann", "Smoke Annotator", Role.ANNOTATOR, "SmokeTest-2026", must_change=False
-    )
-    reviewer = service.create_account(
-        "smoke_rev", "Smoke Reviewer", Role.ANNOTATOR, "SmokeTest-2026", must_change=False
-    )
+    admin = service.create("Smoke Administrator")
+    annotator = service.create("Smoke Annotator")
+    reviewer = service.create("Smoke Reviewer")
     annotator.calibration_passed = True
     repo.update_user(annotator, "Calibration set approved for the smoke run.")
     repo.set_actor(admin)
-    session = service.start_session(admin)
+    session = ActiveProfile(admin)
 
     project = Project(
         name="Smoke project", created_by=admin.id,
@@ -174,7 +168,7 @@ def main() -> int:
     from aria.ui.main_window import MainWindow
 
     repo.set_actor(reviewer)
-    session = service.start_session(reviewer)
+    session = ActiveProfile(reviewer)
     window = MainWindow(repo, config.paths, config, session)
     window.controller.set_project(project)
     window.resize(1600, 980)
@@ -475,13 +469,15 @@ def main() -> int:
         from aria.ui.dialogs.about_dialog import AboutDialog
         from aria.ui.dialogs.shortcuts_dialog import ShortcutsDialog
         from aria.ui.dialogs.preferences_dialog import PreferencesDialog
-        from aria.ui.dialogs.account_dialog import AccountDialog
+        from aria.ui.dialogs.profile_dialog import ProfileDialog
+        from aria.ui.splash import SplashScreen
 
         for factory in (
             lambda: AboutDialog(window),
             lambda: ShortcutsDialog(window),
             lambda: PreferencesDialog(config, window),
-            lambda: AccountDialog(controller, window),
+            lambda: ProfileDialog(repo, config, window),
+            lambda: SplashScreen(total_steps=4),
         ):
             dialog = factory()
             dialog.show()

@@ -51,12 +51,27 @@ Useful flags: `--skip-tests` / `-SkipTests` while iterating,
 2. Record third party licences to `third_party_licences.txt`.
 3. Generate the icon files from the application's own vector icon, so the icon
    in the taskbar, the installer and the application are the same drawing.
-4. Run the test suite. **A failure stops the build.**
-5. Run PyInstaller against `packaging/aria.spec`.
-6. Run the packaged binary's own `--self-test`, which catches a missing module
+4. Write the mark the loader shows, to `aria/resources/aria_logo.png`, unless a
+   mark is already there. See [The mark](#the-mark).
+5. Run the test suite. **A failure stops the build.**
+6. Run PyInstaller against `packaging/aria.spec`.
+7. Run the packaged binary's own `--self-test`, which catches a missing module
    or data file before anyone installs it.
-7. Sign, if credentials were supplied.
-8. Build the installer or disk image.
+8. Sign, if credentials were supplied.
+9. Build the installer or disk image.
+
+## The mark
+
+The loader reads `aria/resources/aria_logo.png` and falls back to drawing the
+mark when that file is missing, so a stripped build still looks like a product.
+To ship different artwork, replace that one file: square, transparent
+background, at least 512 pixels across. A build keeps a mark that is already
+there, so artwork put in deliberately survives one. After changing the drawing
+in `aria/ui/splash.py`, rewrite the file with:
+
+```bash
+python scripts/make_logo.py --force
+```
 
 ## The specification
 

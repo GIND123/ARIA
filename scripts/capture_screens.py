@@ -22,10 +22,10 @@ def build(window_size=(1680, 1000)):
 
     from aria.app import apply_theme
     from aria.config import Config, Paths, set_config
-    from aria.core.models import Annotation, Project, Role, new_id, utc_now
+    from aria.core.models import Annotation, Project, new_id, utc_now
     from aria.core.schema import MCIGrade, Presence, ProjectSchema, Side
     from aria.io.importer import Importer
-    from aria.security.auth import AuthService
+    from aria.core.profile import ActiveProfile, ProfileService
     from aria.store.db import open_database
     from aria.store.repository import Repository
     from aria.ui.main_window import MainWindow
@@ -48,14 +48,10 @@ def build(window_size=(1680, 1000)):
 
     database = open_database(config.paths.database)
     repo = Repository(database)
-    service = AuthService(repo, config.settings)
+    service = ProfileService(repo)
 
-    admin = service.create_account(
-        "docs_admin", "R Mehta", Role.ADMIN, "DocsCapture-2026", must_change=False
-    )
-    reviewer = service.create_account(
-        "docs_ann", "K Alvarez", Role.ANNOTATOR, "DocsCapture-2026", must_change=False
-    )
+    admin = service.create("R Mehta")
+    reviewer = service.create("K Alvarez")
     repo.set_actor(admin)
 
     project = Project(
@@ -75,7 +71,7 @@ def build(window_size=(1680, 1000)):
     target = dicom_cases[0] if dicom_cases else cases[0]
 
     repo.set_actor(reviewer)
-    session = service.start_session(reviewer)
+    session = ActiveProfile(reviewer)
     window = MainWindow(repo, config.paths, config, session)
     window.controller.set_project(project)
     window.resize(*window_size)

@@ -20,7 +20,14 @@ GENESIS_HASH = "0" * 64
 class AuditEvent(str, Enum):
     """The events that must appear in the log (NFR 003)."""
 
-    # Session
+    # Who is annotating
+    PROFILE_SELECTED = "profile_selected"
+
+    # Retired with the sign in they belonged to. Nothing writes them any more.
+    # They stay in the vocabulary because the audit trail is append only and
+    # hash chained: a record written by an earlier version is still in the
+    # file, and a reader that did not know the name would show it as a bare
+    # string and could not group or filter it.
     LOGIN_SUCCESS = "login_success"
     LOGIN_FAILURE = "login_failure"
     LOGOUT = "logout"

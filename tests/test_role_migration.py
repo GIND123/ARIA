@@ -100,11 +100,21 @@ class TestTheUpgradeMovesEveryAccount:
                 f"{username} can no longer manage the study"
             )
 
-    def test_a_reviewer_does_not_gain_administration(self, old_database):
-        """Moving roles must not hand anybody the study settings."""
+    def test_every_moved_profile_can_do_the_whole_job(self, old_database):
+        """What the migration has to protect is now the other way round.
+
+        While there were roles, the thing to check was that moving a reviewer
+        onto the annotator role did not hand them the study settings. Nothing
+        is withheld from anybody any more, so the risk is the opposite one: a
+        profile carried over from an old database must not come back as
+        something the rest of ARIA refuses to work with.
+        """
         users = _users(old_database)
-        for username in ("a_reviewer", "a_manager", "an_auditor"):
-            assert not has_permission(users[username], Permission.MANAGE_USERS)
+        for username in ("a_reviewer", "a_manager", "an_auditor", "a_lead"):
+            user = users[username]
+            assert user.active
+            assert has_permission(user, Permission.EDIT_ANNOTATIONS)
+            assert has_permission(user, Permission.MANAGE_USERS)
 
 
 class TestTheUpgradeRunsOnceAndStays:

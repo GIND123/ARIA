@@ -53,6 +53,10 @@ Step "Generating icon files"
 & $VenvPython (Join-Path $Root "scripts\make_icons.py")
 if ($LASTEXITCODE -ne 0) { Fail "Icon generation failed." }
 
+Step "Generating the mark the loader shows"
+& $VenvPython (Join-Path $Root "scripts\make_logo.py")
+if ($LASTEXITCODE -ne 0) { Fail "The mark could not be written." }
+
 if (-not $SkipTests) {
     Step "Running the test suite"
     & $VenvPython -m pip install --quiet pytest

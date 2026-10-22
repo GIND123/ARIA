@@ -39,49 +39,37 @@ def utc_now() -> str:
 
 
 class Role(str):
-    """Role identifiers. Held as plain strings so they serialise transparently.
+    """What a user record carries in its role column.
 
-    Two roles, because in practice nearly everybody annotates. An annotator
-    does the work: imports images, marks them up, measures, reviews and
-    exports. An administrator does all of that and runs the study as well,
-    which means accounts, projects, the label schema and the tolerances.
+    ARIA no longer withholds anything from anybody, so this is not a list of
+    what someone may do. It is the value stored on a profile, kept as a plain
+    string, so that databases written by every earlier version still load and
+    so that the migration below has somewhere to send the roles those versions
+    used.
 
-    That is the whole difference. Splitting the work further put a wall in the
-    middle of one person's job, and the audit trail, not the role list, is what
-    records who did what.
-
-    A guest is not a third role. It is what a session runs as when somebody
-    opens ARIA without an account, on a workstation where an administrator has
-    allowed that: it can look and it can change nothing. No account is ever
-    given it, so it is not in ``ALL``.
+    Everything is now the one role that could always do the whole job, which
+    is what every profile gets. See ``aria.core.profile``.
     """
 
     ANNOTATOR = "annotator"
-    #: Stored as its original value so that accounts created by earlier
+    #: Stored as its original value so that profiles created by earlier
     #: versions keep working without being rewritten.
     ADMIN = "project_administrator"
-    GUEST = "guest"
 
-    #: The roles an account can hold, in the order the account dialog offers
-    #: them, least privileged first, because the first entry is the one a new
-    #: account gets.
+    #: The values a stored role may hold.
     ALL = (ANNOTATOR, ADMIN)
-
-    DISPLAY = {
-        ANNOTATOR: "Annotator",
-        ADMIN: "Administrator",
-        GUEST: "Guest",
-    }
 
     #: Roles used by earlier versions, and the role each one becomes. A
     #: reviewer, a data manager and an auditor all annotated or read; a lead
-    #: investigator was an administrator who annotated, which is now simply an
-    #: administrator.
+    #: investigator was an administrator who annotated. A guest was never a
+    #: role an account held, only what a session without one ran as, and there
+    #: are no sessions without a profile any more.
     RETIRED = {
         "clinical_reviewer": ANNOTATOR,
         "data_manager": ANNOTATOR,
         "auditor": ANNOTATOR,
         "lead_investigator": ADMIN,
+        "guest": ANNOTATOR,
     }
 
 
@@ -91,39 +79,15 @@ class User:
     username: str = ""
     display_name: str = ""
     role: str = Role.ANNOTATOR
-    #: Pseudonym written into exports in place of the account name (FR 047).
+    #: Pseudonym written into exports in place of the profile name (FR 047).
     pseudonym: str = ""
-    password_hash: str = ""
-    password_salt: str = ""
     active: bool = True
     created_at: str = field(default_factory=utc_now)
-    last_login_at: str | None = None
     #: An annotator must pass the calibration set before production access
     #: (FR 046).
     calibration_passed: bool = False
     calibration_passed_at: str | None = None
     calibration_approved_by: str | None = None
-    must_change_password: bool = False
-    failed_logins: int = 0
-    locked_until: str | None = None
-    #: Digest of the recovery key, which resets a forgotten password without
-    #: an administrator. Kept the way a password is, never as text, and
-    #: replaced every time it is used.
-    recovery_hash: str = ""
-    recovery_salt: str = ""
-    recovery_created_at: str | None = None
-
-    @property
-    def role_display(self) -> str:
-        return Role.DISPLAY.get(self.role, self.role)
-
-    @property
-    def has_recovery_key(self) -> bool:
-        return bool(self.recovery_hash)
-
-    @property
-    def is_guest(self) -> bool:
-        return self.role == Role.GUEST
 
 
 @dataclass

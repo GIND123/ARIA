@@ -1,4 +1,4 @@
-"""First run: compatibility check, administrator account, first project.
+"""First run: compatibility check, the first profile, first project.
 
 The compatibility check runs before anything else, because finding out that a
 workstation cannot do the work after importing a study wastes real time. A
@@ -6,9 +6,11 @@ failed check can be overridden deliberately, with the override recorded, since
 a research machine sometimes falls short of a requirement in a way the team has
 already accepted.
 
-The account gets its recovery key here too. Setup is the one moment every
-installation passes through, and the first administrator forgetting the password
-is the case where nobody else can help.
+Setup asks for one name and no passphrase. It is the one moment every
+installation passes through, so it is also where the trade is stated: ARIA
+keeps its data in a file on this workstation, and a passphrase on the way in
+would guard a door in a building with no walls, while a forgotten one could
+shut a study out of its own data.
 """
 
 from __future__ import annotations
@@ -35,12 +37,10 @@ from PySide6.QtWidgets import (
 from ...core.models import Project, Role
 from ...core.schema import ProjectSchema
 from ...platform.system_check import CheckStatus, run_system_check
-from ...security.auth import AuthService, generate_recovery_key
 from ...version import APP_LONG_NAME, APP_NAME, APP_VERSION
 from ..icons import application_icon, icon as make_icon
 from ..theme import PALETTE
 from ..widgets.common import Banner, StatusChip
-from .recovery_dialog import RecoveryKeyPanel
 
 
 class WelcomePage(QWizardPage):
@@ -64,10 +64,10 @@ class WelcomePage(QWizardPage):
             "Three things happen next:\n\n"
             "1.  This workstation is checked against the requirements, so you know "
             "before you start whether it can do the work.\n\n"
-            "2.  An administrator account is created, with a recovery key for "
-            "the day its password is forgotten. Everything you do in ARIA is "
-            "recorded against an account, which is what makes the audit history "
-            "meaningful.\n\n"
+            "2.  You put in the name you are annotating under. There is no "
+            "password. Everything you do in ARIA is recorded against that "
+            "name, which makes the audit history meaningful and is what "
+            "agreement between observers is measured from.\n\n"
             "3.  A first project is created, holding its own label schema, "
             "tolerances and privacy profile.",
             self,
@@ -243,135 +243,66 @@ class CompatibilityPage(QWizardPage):
         return self._override
 
 
-class AccountPage(QWizardPage):
-    """Creates the first administrator account."""
+class ProfilePage(QWizardPage):
+    """Asks who will be annotating. One name, and nothing to remember."""
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
-        self.setTitle("Administrator account")
+        self._complete = False
+        self.setTitle("Who is annotating?")
         self.setSubTitle(
-            "This account manages projects, accounts and policy. Create other "
-            "accounts from the Administration module afterwards."
+            "Every annotation is recorded against a profile, so that agreement "
+            "between observers can be measured and the history says whose work "
+            "each case is. Add more profiles at any time from the window that "
+            "opens with ARIA."
         )
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
         form.setSpacing(9)
 
-        self.username = QLineEdit(self)
-        self.username.setPlaceholderText("Used to sign in")
         self.display_name = QLineEdit(self)
-        self.display_name.setPlaceholderText("Shown in the interface")
-        self.password = QLineEdit(self)
-        self.password.setEchoMode(QLineEdit.Password)
-        self.confirm = QLineEdit(self)
-        self.confirm.setEchoMode(QLineEdit.Password)
-
-        form.addRow("Username", self.username)
-        form.addRow("Display name", self.display_name)
-        form.addRow("Password", self.password)
-        form.addRow("Confirm password", self.confirm)
+        self.display_name.setPlaceholderText("Name as it should appear in the history")
+        form.addRow("Name", self.display_name)
         layout.addLayout(form)
 
-        self.policy = QLabel("", self)
-        self.policy.setWordWrap(True)
-        self.policy.setProperty("dim", True)
-        layout.addWidget(self.policy)
-
-        self.status = QLabel("", self)
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-
         note = QLabel(
-            "Passwords are stored as a memory hard digest, never as text, so "
-            "ARIA cannot tell you a forgotten one. The next page gives you a "
-            "recovery key that resets it instead. A second administrator "
-            "account, added once setup is finished, is another way back in.",
+            "There is no password. ARIA keeps its data in a file on this "
+            "workstation, so a password on the way in would guard a door in a "
+            "building with no walls, while a forgotten one could shut a study "
+            "out of its own data. A profile is a label, not a credential: "
+            "anybody at this workstation can choose any of them.",
             self,
         )
         note.setWordWrap(True)
         note.setProperty("dim", True)
         layout.addWidget(note)
 
-        # No question about what this account may do. It is the first one, so
-        # it administers the study, and an administrator annotates as well.
-        role_note = QLabel(
-            "This account can do everything: import images, annotate and "
-            "measure them, export the results, and add further accounts. "
-            "Colleagues you add later are annotators, which is the same "
-            "without the study settings.",
-            self,
-        )
-        role_note.setWordWrap(True)
-        role_note.setProperty("dim", True)
-        layout.addWidget(role_note)
+        self.status = QLabel("", self)
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
         layout.addStretch(1)
 
-        for field in (self.username, self.display_name, self.password, self.confirm):
-            field.textChanged.connect(self._validate)
-
-        self.registerField("username*", self.username)
-        self.registerField("display_name", self.display_name)
-        self.registerField("password*", self.password)
-
-    def initializePage(self) -> None:
-        settings = self.config.settings
-        rules = [f"at least {settings.password_min_length} characters"]
-        if settings.password_require_mixed_case:
-            rules.append("upper and lower case")
-        if settings.password_require_digit:
-            rules.append("a digit")
-        if settings.password_require_symbol:
-            rules.append("a symbol")
-        self.policy.setText("The password needs " + ", ".join(rules) + ".")
+        self.display_name.textChanged.connect(self._validate)
+        self.registerField("display_name*", self.display_name)
 
     def _validate(self) -> None:
-        problems = []
-        if not self.username.text().strip():
-            problems.append("A username is required.")
-        problems.extend(self.config.settings.validate_password(self.password.text()))
-        if self.password.text() != self.confirm.text():
-            problems.append("The two passwords do not match.")
+        from ...core.profile import normalise_name
 
-        if problems:
-            self.status.setText("   ".join(problems))
+        name = normalise_name(self.display_name.text())
+        if not name:
+            self.status.setText("Put in a name to continue.")
             self.status.setStyleSheet(f"color: {PALETTE.warning};")
+            self._complete = False
         else:
-            self.status.setText("This password meets the policy.")
+            self.status.setText(f"Annotations will be recorded against {name}.")
             self.status.setStyleSheet(f"color: {PALETTE.success};")
-        self._complete = not problems
+            self._complete = True
         self.completeChanged.emit()
 
     def isComplete(self) -> bool:
-        return getattr(self, "_complete", False)
-
-
-class RecoveryKeyPage(QWizardPage):
-    """Shows the recovery key the new account will be given at Finish."""
-
-    def __init__(self, key: str, parent=None):
-        super().__init__(parent)
-        self.setTitle("Recovery key")
-        self.setSubTitle(
-            "The way back into this account if the password is ever forgotten."
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        self.panel = RecoveryKeyPanel(key, "", self)
-        layout.addWidget(self.panel)
-
-        self.kept = QCheckBox("I have kept this recovery key somewhere safe", self)
-        self.kept.toggled.connect(lambda _checked: self.completeChanged.emit())
-        layout.addWidget(self.kept)
-        layout.addStretch(1)
-
-    def initializePage(self) -> None:
-        self.panel.set_account(str(self.field("username") or "").strip())
-
-    def isComplete(self) -> bool:
-        return self.kept.isChecked()
+        return self._complete
 
 
 class ProjectPage(QWizardPage):
@@ -449,9 +380,6 @@ class FirstRunWizard(QWizard):
         self.created_user = None
         self.created_project = None
         self.show_tour = True
-        #: Shown on its page before the account exists, and given to the
-        #: account when it is created at Finish.
-        self.recovery_key = generate_recovery_key()
 
         self.setWindowTitle(f"{APP_NAME} setup")
         self.setWindowIcon(application_icon())
@@ -461,38 +389,30 @@ class FirstRunWizard(QWizard):
 
         self.welcome_page = WelcomePage(self)
         self.compatibility_page = CompatibilityPage(paths, config, self)
-        self.account_page = AccountPage(config, self)
-        self.recovery_page = RecoveryKeyPage(self.recovery_key, self)
+        self.profile_page = ProfilePage(config, self)
         self.project_page = ProjectPage(self)
 
         self.addPage(self.welcome_page)
         self.addPage(self.compatibility_page)
-        self.addPage(self.account_page)
-        self.addPage(self.recovery_page)
+        self.addPage(self.profile_page)
         self.addPage(self.project_page)
 
         self.setButtonText(QWizard.FinishButton, "Finish setup")
 
     def accept(self) -> None:
-        service = AuthService(self.repo, self.config.settings)
+        from ...core.profile import ProfileError, ProfileService
+
         try:
-            user = service.create_account(
-                self.account_page.username.text().strip(),
-                self.account_page.display_name.text().strip(),
-                Role.ADMIN,
-                self.account_page.password.text(),
-                must_change=False,
+            user = ProfileService(self.repo).create(
+                self.profile_page.display_name.text().strip()
             )
-        except ValueError as exc:
-            QMessageBox.warning(self, "The account could not be created", str(exc))
+        except ProfileError as exc:
+            QMessageBox.warning(self, "The profile could not be created", str(exc))
             return
 
         self.repo.set_actor(user)
         self.created_user = user
-        service.issue_recovery_key(user, self.recovery_key)
 
-        # One account, one password, and it can do the whole job. Colleagues
-        # are added afterwards from Administration, Accounts.
         schema = ProjectSchema()
         schema.mandible_mode = self.project_page.mandible.currentData()
         project = Project(

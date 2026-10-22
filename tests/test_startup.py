@@ -7,7 +7,8 @@ result code read from an instance rather than from the class, which raises only
 when that exact line runs.
 
 These tests drive ``run`` itself, with the dialogs answered automatically, so
-the startup sequence is covered end to end: first run, sign in, and the failure
+the startup sequence is covered end to end: first run, choosing a profile on
+every launch after it, adding a profile without anyone's permission, and the
 paths where someone cancels.
 """
 
@@ -110,7 +111,7 @@ def startup_env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _answer_first_run(monkeypatch, username="startup_admin", password="StartupTest-2026"):
+def _answer_first_run(monkeypatch, name="Startup Administrator"):
     """Fill the first run wizard and accept it, as a person would."""
     from PySide6.QtWidgets import QDialog
 
@@ -121,10 +122,7 @@ def _answer_first_run(monkeypatch, username="startup_admin", password="StartupTe
         self.compatibility_page.initializePage()
         if getattr(self, "worker", None) is None and hasattr(self.compatibility_page, "worker"):
             self.compatibility_page.worker.wait(30_000)
-        self.account_page.username.setText(username)
-        self.account_page.display_name.setText("Startup Administrator")
-        self.account_page.password.setText(password)
-        self.account_page.confirm.setText(password)
+        self.profile_page.display_name.setText(name)
         self.project_page.name.setText("Startup project")
         self.accept()
         return QDialog.DialogCode.Accepted
@@ -132,21 +130,43 @@ def _answer_first_run(monkeypatch, username="startup_admin", password="StartupTe
     monkeypatch.setattr(FirstRunWizard, "exec", fake_exec)
 
 
-def _answer_login(monkeypatch, username, password):
+def _choose_profile(monkeypatch, name):
+    """Pick a profile that already exists, as a person would on a later launch."""
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QDialog
 
-    from aria.ui.dialogs.login_dialog import LoginDialog
+    from aria.ui.dialogs.profile_dialog import ProfileDialog
 
     def fake_exec(self):
-        self.username.setText(username)
-        self.password.setText(password)
-        self._attempt()
+        index = self.profiles.findText(name, Qt.MatchStartsWith)
+        if index < 0:
+            return QDialog.DialogCode.Rejected
+        self.profiles.setCurrentIndex(index)
+        self._start()
         return (
-            QDialog.DialogCode.Accepted if self.user is not None
+            QDialog.DialogCode.Accepted if self.profile is not None
             else QDialog.DialogCode.Rejected
         )
 
-    monkeypatch.setattr(LoginDialog, "exec", fake_exec)
+    monkeypatch.setattr(ProfileDialog, "exec", fake_exec)
+
+
+def _add_profile(monkeypatch, name):
+    """Type a new name into the window that opens with ARIA and use it."""
+    from PySide6.QtWidgets import QDialog
+
+    from aria.ui.dialogs.profile_dialog import ProfileDialog
+
+    def fake_exec(self):
+        self.new_name.setText(name)
+        self._add()
+        self._start()
+        return (
+            QDialog.DialogCode.Accepted if self.profile is not None
+            else QDialog.DialogCode.Rejected
+        )
+
+    monkeypatch.setattr(ProfileDialog, "exec", fake_exec)
 
 
 class TestStartup:
@@ -178,15 +198,16 @@ class TestStartup:
             users = repository.list_users()
             projects = repository.list_projects()
             assert len(users) == 1
-            assert users[0].username == "startup_admin"
-            assert users[0].role == "project_administrator"
+            assert users[0].display_name == "Startup Administrator"
+            assert not hasattr(users[0], "password_hash"), "Setup stored a password"
+            assert users[0].pseudonym, "The profile has no export pseudonym"
             assert len(projects) == 1
             assert projects[0].name == "Startup project"
             assert repository.verify_audit_chain()["valid"]
         finally:
             database.close()
 
-    def test_second_launch_signs_in_and_opens_the_window(self, startup_env, monkeypatch):
+    def test_second_launch_picks_a_profile_and_opens_the_window(self, startup_env, monkeypatch):
         """The path taken on every launch after the first, through to a window.
 
         Asserting that the main window is actually constructed and shown is the
@@ -202,11 +223,12 @@ class TestStartup:
         _answer_first_run(monkeypatch)
         assert run([]) == 0
 
-        # Start again. The installation now exists, so sign in is used instead.
+        # Start again. The installation now exists, so ARIA asks which profile
+        # is annotating instead of running setup again.
         import aria.config as config_module
 
         monkeypatch.setattr(config_module, "_CONFIG", None, raising=False)
-        _answer_login(monkeypatch, "startup_admin", "StartupTest-2026")
+        _choose_profile(monkeypatch, "Startup Administrator")
 
         opened = {}
         real_show = main_window_module.MainWindow.show
@@ -215,7 +237,7 @@ class TestStartup:
             opened["window"] = self
             opened["title"] = self.windowTitle()
             opened["modules"] = self.module_combo.count()
-            opened["user"] = self.session.user.username if self.session.user else None
+            opened["user"] = self.session.user.display_name if self.session.user else None
             real_show(self)
 
         monkeypatch.setattr(main_window_module.MainWindow, "show", record_show)
@@ -223,7 +245,7 @@ class TestStartup:
         assert run([]) == 0
         assert opened, "The main window was never shown"
         assert "ARIA" in opened["title"]
-        assert opened["user"] == "startup_admin"
+        assert opened["user"] == "Startup Administrator"
         assert opened["modules"] >= 5, "Modules were not populated"
 
         window = opened["window"]
@@ -231,7 +253,7 @@ class TestStartup:
         assert window.statusBar() is not None
         assert window.menuBar().actions(), "The menu bar is empty"
 
-    def test_cancelling_first_run_leaves_no_account(self, startup_env, monkeypatch):
+    def test_cancelling_first_run_leaves_no_profile(self, startup_env, monkeypatch):
         from PySide6.QtWidgets import QDialog
 
         from aria.app import run
@@ -252,11 +274,11 @@ class TestStartup:
         finally:
             database.close()
 
-    def test_cancelling_sign_in_exits_cleanly(self, startup_env, monkeypatch):
+    def test_closing_the_profile_window_exits_cleanly(self, startup_env, monkeypatch):
         from PySide6.QtWidgets import QDialog
 
         from aria.app import run
-        from aria.ui.dialogs.login_dialog import LoginDialog
+        from aria.ui.dialogs.profile_dialog import ProfileDialog
 
         import aria.ui.dialogs.tour as tour_module
 
@@ -267,13 +289,23 @@ class TestStartup:
         import aria.config as config_module
 
         monkeypatch.setattr(config_module, "_CONFIG", None, raising=False)
-        monkeypatch.setattr(LoginDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
+        monkeypatch.setattr(ProfileDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
         assert run([]) == 0
 
-    def test_a_wrong_password_does_not_open_the_application(self, startup_env, monkeypatch):
+    def test_a_new_annotator_can_start_without_being_let_in(
+        self, startup_env, monkeypatch
+    ):
+        """The complaint behind this: there was no way to sign up.
+
+        A second person sitting down at the workstation types their name into
+        the window that opens with ARIA and begins. Nobody has to issue them
+        anything, and the work they do is recorded against their own name
+        rather than somebody else's.
+        """
         from aria.app import run
 
         import aria.ui.dialogs.tour as tour_module
+        import aria.ui.main_window as main_window_module
 
         monkeypatch.setattr(tour_module, "should_offer_tour", lambda settings: False)
         _answer_first_run(monkeypatch)
@@ -282,10 +314,19 @@ class TestStartup:
         import aria.config as config_module
 
         monkeypatch.setattr(config_module, "_CONFIG", None, raising=False)
-        _answer_login(monkeypatch, "startup_admin", "not-the-password")
+        _add_profile(monkeypatch, "Second Annotator")
 
-        # Sign in fails, so the application closes rather than opening.
+        opened = {}
+        real_show = main_window_module.MainWindow.show
+
+        def record_show(self):
+            opened["user"] = self.session.user.display_name
+            real_show(self)
+
+        monkeypatch.setattr(main_window_module.MainWindow, "show", record_show)
+
         assert run([]) == 0
+        assert opened.get("user") == "Second Annotator"
 
         from aria.config import get_config
         from aria.store.db import open_database
@@ -293,11 +334,13 @@ class TestStartup:
 
         database = open_database(get_config().paths.database, read_only=True)
         try:
-            failures = [
-                r for r in Repository(database).audit_records(limit=50)
-                if r.event == "login_failure"
-            ]
-            assert failures, "A failed sign in was not recorded"
+            repository = Repository(database)
+            names = sorted(u.display_name for u in repository.list_users())
+            pseudonyms = {u.pseudonym for u in repository.list_users()}
+            assert names == ["Second Annotator", "Startup Administrator"]
+            # Two annotators whose export rows can be told apart, which is what
+            # an agreement figure is computed from.
+            assert len(pseudonyms) == 2
         finally:
             database.close()
 

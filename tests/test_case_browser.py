@@ -27,7 +27,7 @@ def window(paths, repo, admin, project, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     from aria.config import Config
-    from aria.security.auth import AuthService
+    from aria.core.profile import ActiveProfile
 
     config = Config(paths)
     config.settings.first_run_completed = True
@@ -36,7 +36,7 @@ def window(paths, repo, admin, project, monkeypatch):
 
     app = QApplication.instance() or QApplication([])
     repo.set_actor(admin)
-    session = AuthService(repo, config.settings).start_session(admin)
+    session = ActiveProfile(admin)
 
     from aria.ui.main_window import MainWindow
 
@@ -153,7 +153,7 @@ class TestNoRoleIsStuckUnableToAnnotate:
         from PySide6.QtWidgets import QApplication
 
         from aria.config import Config
-        from aria.security.auth import AuthService
+        from aria.core.profile import ActiveProfile
         from aria.ui.main_window import MainWindow
 
         config = Config(paths)
@@ -162,7 +162,7 @@ class TestNoRoleIsStuckUnableToAnnotate:
         config.settings.backup_on_launch = False
         app = QApplication.instance() or QApplication([])
         repo.set_actor(annotator)
-        session = AuthService(repo, config.settings).start_session(annotator)
+        session = ActiveProfile(annotator)
 
         w = MainWindow(repo, paths, config, session)
         try:
@@ -179,21 +179,23 @@ class TestNoRoleIsStuckUnableToAnnotate:
             w.deleteLater()
             app.processEvents()
 
-    def test_every_role_can_annotate(self):
-        from aria.core.models import Role
+    def test_every_profile_can_annotate(self):
+        """Nothing is withheld from a profile, so the only thing that can
+        make a case read only is the case itself."""
         from aria.security.auth import Permission, permissions_for
 
-        for role in Role.ALL:
-            assert Permission.EDIT_ANNOTATIONS in permissions_for(role), (
-                f"The {role} role cannot annotate"
-            )
+        assert Permission.EDIT_ANNOTATIONS in permissions_for()
 
-    def test_a_deactivated_account_is_told_which_account_it_is(
+    def test_a_retired_profile_is_told_which_profile_it_is(
         self, window, repo, admin, sample_dicom
     ):
-        """The one way a case still opens read only on account grounds. It
-        names the account rather than a role, because the role is not the
-        problem any more."""
+        """The one way a case still opens read only on who you are.
+
+        Nothing is withheld from a profile, so reaching here means the profile
+        itself has been retired. Saying which one, and where to restore it, is
+        the difference between knowing what to do and staring at a case that
+        cannot be touched.
+        """
         summary = _import(window, admin, sample_dicom)
         window.controller.close_case()
 
@@ -202,16 +204,18 @@ class TestNoRoleIsStuckUnableToAnnotate:
 
         reason = window.controller.read_only_reason
         assert window.controller.read_only
-        assert admin.username in reason, reason
-        assert "not active" in reason.lower(), reason
+        assert admin.display_name in reason, reason
+        assert "retired" in reason.lower(), reason
+        assert "Administration, Profiles" in reason, reason
 
 
-class TestFirstRunGivesOnePersonOneAccount:
-    """Setup creates one account, and it can do everything (FR 046).
+class TestFirstRunGivesOnePersonOneProfile:
+    """Setup creates one profile, and it can do everything (FR 046).
 
     It used to ask whether you would also be annotating, and create a second
-    account with its own password if you said yes. With an administrator able
-    to annotate there is nothing to ask and nothing to issue twice.
+    account with its own password if you said yes. There is nothing to ask
+    now: a profile is a name, every profile can do the whole job, and more are
+    added from the window that opens with ARIA.
     """
 
     def _wizard(self, paths, repo, monkeypatch):
@@ -224,14 +228,11 @@ class TestFirstRunGivesOnePersonOneAccount:
 
         QApplication.instance() or QApplication([])
         wizard = FirstRunWizard(repo, paths, Config(paths), None)
-        wizard.account_page.username.setText("solo")
-        wizard.account_page.display_name.setText("Solo Researcher")
-        wizard.account_page.password.setText("SoloStudy-2026")
-        wizard.account_page.confirm.setText("SoloStudy-2026")
+        wizard.profile_page.display_name.setText("Solo Researcher")
         wizard.project_page.name.setText("Solo project")
         return wizard
 
-    def test_the_one_account_can_do_the_whole_job(self, paths, repo, monkeypatch):
+    def test_the_one_profile_can_do_the_whole_job(self, paths, repo, monkeypatch):
         from aria.core.models import Role
         from aria.security.auth import Permission, has_permission
 
@@ -249,23 +250,38 @@ class TestFirstRunGivesOnePersonOneAccount:
             Permission.MANAGE_USERS,
         ):
             assert has_permission(user, permission), (
-                f"The first account cannot {permission.value.replace('_', ' ')}"
+                f"The first profile cannot {permission.value.replace('_', ' ')}"
             )
 
-    def test_only_one_account_is_created(self, paths, repo, monkeypatch):
+    def test_the_profile_is_made_without_a_password(self, paths, repo, monkeypatch):
+        """Nothing is stored that could later be forgotten.
+
+        The fields are absent rather than empty, so nothing can quietly start
+        filling them again.
+        """
+        wizard = self._wizard(paths, repo, monkeypatch)
+        wizard.accept()
+
+        user = wizard.created_user
+        for gone in ("password_hash", "password_salt", "recovery_hash"):
+            assert not hasattr(user, gone), f"A profile still carries {gone}"
+        assert user.pseudonym
+
+    def test_only_one_profile_is_created(self, paths, repo, monkeypatch):
         wizard = self._wizard(paths, repo, monkeypatch)
         wizard.accept()
 
         assert len(repo.list_users()) == 1
 
-    def test_setup_asks_nothing_about_roles(self, paths, repo, monkeypatch):
-        """The second password, and the question that led to it, are gone."""
+    def test_setup_asks_for_a_name_and_nothing_else(self, paths, repo, monkeypatch):
+        """No role question, no second account, and no passphrase to lose."""
         wizard = self._wizard(paths, repo, monkeypatch)
-        page = wizard.account_page
+        page = wizard.profile_page
 
         for gone in (
             "also_annotate", "annotator_username",
             "annotator_password", "annotator_confirm",
+            "password", "confirm", "role", "recovery_key",
         ):
             assert not hasattr(page, gone), f"Setup still asks about {gone}"
 
@@ -407,7 +423,7 @@ class TestTheProjectSelectorFollowsTheOpenProject:
         from PySide6.QtWidgets import QApplication
 
         from aria.config import Config
-        from aria.security.auth import AuthService
+        from aria.core.profile import ActiveProfile
         from aria.ui.main_window import MainWindow
 
         config = Config(paths)
@@ -415,7 +431,7 @@ class TestTheProjectSelectorFollowsTheOpenProject:
         config.settings.tour_completed = True
         config.settings.backup_on_launch = False
         app = QApplication.instance() or QApplication([])
-        session = AuthService(repo, config.settings).start_session(admin)
+        session = ActiveProfile(admin)
 
         window = MainWindow(repo, paths, config, session)
         try:

@@ -418,33 +418,221 @@ class TestAudit:
 
 
 # ---------------------------------------------------------------------------
-# Permissions
+# Profiles
 # ---------------------------------------------------------------------------
 
 
-class TestPermissions:
-    """Two roles, least privilege between them (NFR 001).
+class TestProfilesReplaceAccounts:
+    """Who is annotating is a name, not a credential.
 
-    An annotator does the work on a case from import through to export. An
-    administrator does that and runs the study as well. The tests below pin
-    both halves: that the work is not split across accounts, and that running
-    the study is still a separate thing to be given deliberately.
+    ARIA runs on one workstation against one local file. A password on the way
+    in guarded nothing that was not already readable beside it, and it cost a
+    forgotten passphrase locking a study out of its own data. So there is no
+    sign in. What is kept is the name, because agreement between observers is
+    computed by comparing two named annotators on one case.
     """
 
-    def test_there_are_two_roles(self):
-        """Two roles an account can hold. A guest is a session without an
-        account, so it has a name but is never offered for an account."""
-        from aria.core.models import Role
+    def test_a_profile_is_made_from_a_name_alone(self, repo):
+        from aria.core.profile import ProfileService
 
-        assert Role.ALL == (Role.ANNOTATOR, Role.ADMIN)
-        assert Role.GUEST not in Role.ALL
-        assert set(Role.DISPLAY) == set(Role.ALL) | {Role.GUEST}
+        user = ProfileService(repo).create("Priya Menon")
 
-    def test_an_annotator_does_the_whole_job_on_a_case(self):
+        assert user.display_name == "Priya Menon"
+        assert user.active
+        assert not getattr(user, "password_hash", "")
+
+    def test_a_profile_gets_an_export_pseudonym(self, repo):
+        from aria.core.profile import ProfileService
+
+        user = ProfileService(repo).create("Priya Menon")
+
+        assert user.pseudonym == "PRI-001"
+
+    def test_two_similar_names_get_distinct_pseudonyms(self, repo):
+        """Exports identify an annotator by pseudonym, so two of them
+        colliding would merge one person's rows into another's."""
+        from aria.core.profile import ProfileService
+
+        service = ProfileService(repo)
+        first = service.create("Priya Menon")
+        second = service.create("Priyanka Rao")
+
+        assert first.pseudonym != second.pseudonym
+
+    def test_a_name_already_taken_is_refused(self, repo):
+        """Two profiles with one name cannot be told apart in the history."""
+        from aria.core.profile import ProfileError, ProfileService
+
+        service = ProfileService(repo)
+        service.create("Priya Menon")
+
+        with pytest.raises(ProfileError, match="already a profile"):
+            service.create("  priya   menon ")
+
+    def test_an_empty_name_is_refused(self, repo):
+        from aria.core.profile import ProfileError, ProfileService
+
+        with pytest.raises(ProfileError, match="needs a name"):
+            ProfileService(repo).create("   ")
+
+    def test_anybody_can_make_one_without_being_let_in(self, repo):
+        """The complaint behind this: there was no sign up. A new annotator
+        could only be created by an administrator or by the setup wizard."""
+        from aria.core.profile import ProfileService
+
+        service = ProfileService(repo)
+        assert not service.any_profile_exists()
+        service.create("First Annotator")
+        service.create("Second Annotator")
+
+        assert [u.display_name for u in service.list_profiles()] == [
+            "First Annotator", "Second Annotator",
+        ]
+
+    def test_retiring_a_profile_keeps_its_work_attributed(self, repo):
+        """Deleting the name would orphan every row it produced and silently
+        break any agreement figure computed from them."""
+        from aria.core.profile import ProfileService
+
+        service = ProfileService(repo)
+        user = service.create("Leaving Soon")
+        service.deactivate(user)
+
+        assert [u.id for u in service.list_profiles()] == []
+        assert service.get(user.id) is not None
+        assert service.get(user.id).display_name == "Leaving Soon"
+
+    def test_a_retired_profile_comes_back(self, repo):
+        from aria.core.profile import ProfileService
+
+        service = ProfileService(repo)
+        user = service.create("Back Again")
+        service.deactivate(user)
+        service.reactivate(user)
+
+        assert [u.display_name for u in service.list_profiles()] == ["Back Again"]
+
+    def test_renaming_keeps_the_same_profile(self, repo):
+        """A rename is not a new annotator: the rows already written stay
+        attached to the record that wrote them."""
+        from aria.core.profile import ProfileService
+
+        service = ProfileService(repo)
+        user = service.create("Mispelt Name")
+        service.rename(user, "Misspelt Name")
+
+        assert service.get(user.id).display_name == "Misspelt Name"
+        assert len(service.list_profiles()) == 1
+
+    def test_renaming_onto_another_name_is_refused(self, repo):
+        from aria.core.profile import ProfileError, ProfileService
+
+        service = ProfileService(repo)
+        service.create("One Person")
+        other = service.create("Other Person")
+
+        with pytest.raises(ProfileError, match="already a profile"):
+            service.rename(other, "One Person")
+
+    def test_the_active_profile_never_expires(self, repo):
+        """There is nothing to time out of, because nothing was proved on the
+        way in. The window still asks, so the answer has to be no."""
+        from aria.core.profile import ActiveProfile, ProfileService
+
+        user = ProfileService(repo).create("At The Desk")
+        active = ActiveProfile(user)
+        active.touch()
+
+        assert not active.is_expired()
+        assert active.display_name == "At The Desk"
+        assert active.user is user
+
+
+class TestASettingsFileFromBeforeStillLoads:
+    """A workstation configured by an earlier version keeps its preferences.
+
+    The timeout, the passphrase rules, the lockout and the guest switch are
+    gone from ``Settings``. A settings file still on disk names them, and a
+    person who opens ARIA after the upgrade should find their font size and
+    their export folder where they left them rather than a fresh default.
+    """
+
+    RETIRED = (
+        "session_timeout_minutes", "lock_on_idle", "password_min_length",
+        "password_require_mixed_case", "password_require_digit",
+        "password_require_symbol", "password_max_age_days",
+        "max_failed_logins", "lockout_minutes", "allow_guest_access",
+    )
+
+    def test_the_retired_policy_settings_are_gone(self):
+        from aria.config import Settings
+
+        declared = set(Settings.__dataclass_fields__)
+        still_there = [name for name in self.RETIRED if name in declared]
+        assert not still_there, f"Still configured: {still_there}"
+
+    def test_the_policy_that_is_left_is_still_configurable(self):
+        from aria.config import Settings
+
+        declared = set(Settings.__dataclass_fields__)
+        for name in (
+            "encrypt_at_rest", "retention_days", "backup_on_launch",
+            "backup_keep_count", "prohibited_terms",
+            "allow_third_party_services",
+        ):
+            assert name in declared, f"{name} is no longer configurable"
+
+    def test_an_old_file_loads_and_keeps_what_is_still_meaningful(self, tmp_path):
+        import json
+
+        from aria.config import Config, Paths
+
+        paths = Paths(
+            data_dir=tmp_path / "data", config_dir=tmp_path / "cfg",
+            log_dir=tmp_path / "logs", cache_dir=tmp_path / "cache",
+        )
+        paths.ensure()
+        written = {
+            "font_point_size": 12,
+            "default_export_dir": str(tmp_path / "exports"),
+            "retention_days": 90,
+        }
+        written.update({name: 7 for name in self.RETIRED})
+        paths.settings_file.write_text(json.dumps(written), encoding="utf-8")
+
+        settings = Config(paths).load().settings
+
+        assert settings.font_point_size == 12
+        assert settings.default_export_dir == str(tmp_path / "exports")
+        assert settings.retention_days == 90
+        for name in self.RETIRED:
+            assert not hasattr(settings, name)
+
+    def test_there_is_no_password_policy_left_to_check(self):
+        from aria.config import Settings
+
+        assert not hasattr(Settings(), "validate_password")
+
+
+class TestNothingIsWithheld:
+    """The permission vocabulary stays; nothing consults it to refuse.
+
+    The names are kept because the call sites read as a description of what
+    each action is for, and a reader of the audit trail benefits from the
+    categories. They are no longer a gate.
+    """
+
+    def test_every_profile_holds_every_permission(self, annotator):
+        from aria.security.auth import ALL_PERMISSIONS, Permission, has_permission
+
+        for permission in Permission:
+            assert has_permission(annotator, permission)
+        assert set(ALL_PERMISSIONS) == set(Permission)
+
+    def test_the_whole_job_is_available_to_one_profile(self, annotator):
         """The report behind this: a case could be opened and worked on, and
         then the next image could not be imported and the finished one could
         not be exported."""
-        from aria.core.models import Role
         from aria.security.auth import Permission, permissions_for
 
         whole_job = {
@@ -453,112 +641,33 @@ class TestPermissions:
             Permission.DELETE_ANNOTATIONS, Permission.REVIEW_CASES,
             Permission.EXPORT_DATA, Permission.CREATE_BUNDLE,
             Permission.CONFIRM_LATERALITY, Permission.VALIDATE_CALIBRATION,
-        }
-        missing = whole_job - permissions_for(Role.ANNOTATOR)
-        assert not missing, (
-            f"An annotator cannot {sorted(p.value for p in missing)}"
-        )
-
-    def test_running_the_study_is_the_only_difference(self):
-        from aria.core.models import Role
-        from aria.security.auth import (
-            STUDY_ADMINISTRATION, permissions_for,
-        )
-
-        annotator = permissions_for(Role.ANNOTATOR)
-        admin = permissions_for(Role.ADMIN)
-
-        assert admin - annotator == STUDY_ADMINISTRATION
-        assert not annotator - admin, "An annotator holds something an admin does not"
-
-    def test_an_annotator_cannot_run_the_study(self):
-        from aria.core.models import Role
-        from aria.security.auth import Permission, permissions_for
-
-        annotator = permissions_for(Role.ANNOTATOR)
-        for permission in (
             Permission.MANAGE_USERS, Permission.MANAGE_PROJECTS,
             Permission.MANAGE_SCHEMA, Permission.MANAGE_THRESHOLDS,
-            Permission.MANAGE_POLICY, Permission.APPROVE_CALIBRATION_SET,
-        ):
-            assert permission not in annotator, (
-                f"An annotator can {permission.value.replace('_', ' ')}"
-            )
+        }
+        assert not whole_job - permissions_for()
 
-    def test_a_new_account_defaults_to_the_least_privileged_role(self):
-        """The account dialog selects the first role in the list."""
-        from aria.core.models import Role
-
-        assert Role.ALL[0] == Role.ANNOTATOR
-
-    def test_every_role_is_named_and_described(self):
-        from aria.core.models import Role
-        from aria.security.auth import ROLE_PERMISSIONS
-        from aria.ui.dialogs.account_dialog import ROLE_DESCRIPTIONS
-
-        for role in Role.ALL:
-            assert role in Role.DISPLAY, f"{role} has no display name"
-            assert role in ROLE_DESCRIPTIONS, f"{role} has no description"
-            assert role in ROLE_PERMISSIONS, f"{role} has no permissions"
-        assert set(ROLE_DESCRIPTIONS) == set(Role.ALL)
-        assert set(ROLE_PERMISSIONS) == set(Role.ALL) | {Role.GUEST}
-
-    def test_require_explains_the_refusal(self, annotator):
+    def test_require_refuses_nothing(self, annotator):
         from aria.security.auth import Permission, require
 
-        with pytest.raises(PermissionError) as info:
-            require(annotator, Permission.MANAGE_USERS)
-        assert "manage users" in str(info.value)
-        assert "Annotator" in str(info.value)
+        assert require(annotator, Permission.MANAGE_USERS) is None
 
-    def test_deactivated_account_has_no_permissions(self, annotator):
-        from aria.security.auth import Permission, has_permission
+    def test_nothing_holds_a_profile_back_from_a_production_case(self, annotator):
+        """Submission used to be gated on a calibration set that a reviewer
+        had to approve, and there are no reviewers left to approve it."""
+        from aria.security.auth import production_access_blocked
 
-        annotator.active = False
-        assert not has_permission(annotator, Permission.EDIT_ANNOTATIONS)
+        assert production_access_blocked(annotator, require_calibration=True) == ""
 
+    def test_the_sign_in_machinery_is_gone(self):
+        """Not merely unused: absent, so nothing can quietly call it again."""
+        import aria.security.auth as auth
 
-class TestAuthentication:
-    def test_password_round_trip(self):
-        from aria.security.auth import hash_password, verify_password
-
-        digest, salt = hash_password("a-good-passphrase-2026")
-        assert verify_password("a-good-passphrase-2026", digest, salt)
-        assert not verify_password("wrong", digest, salt)
-        assert "a-good-passphrase-2026" not in digest
-
-    def test_lockout_after_repeated_failures(self, repo, settings):
-        from aria.security.auth import AccountLockedError, AuthService, AuthenticationError
-
-        settings.max_failed_logins = 3
-        service = AuthService(repo, settings)
-        service.create_account("locktest", "Lock Test", "annotator", "GoodPassword-2026", must_change=False)
-
-        for _ in range(3):
-            with pytest.raises(AuthenticationError):
-                service.authenticate("locktest", "wrong")
-
-        with pytest.raises(AccountLockedError):
-            service.authenticate("locktest", "GoodPassword-2026")
-
-    def test_policy_is_enforced(self, repo, settings):
-        from aria.security.auth import AuthService
-
-        service = AuthService(repo, settings)
-        with pytest.raises(ValueError, match="at least"):
-            service.create_account("short", "Short", "annotator", "abc")
-
-    def test_unknown_account_and_wrong_password_read_the_same(self, repo, settings):
-        from aria.security.auth import AuthService, AuthenticationError
-
-        service = AuthService(repo, settings)
-        service.create_account("real", "Real", "annotator", "GoodPassword-2026", must_change=False)
-
-        with pytest.raises(AuthenticationError) as a:
-            service.authenticate("real", "wrong")
-        with pytest.raises(AuthenticationError) as b:
-            service.authenticate("nobody", "wrong")
-        assert str(a.value) == str(b.value)
+        for name in (
+            "AuthService", "hash_password", "verify_password",
+            "AuthenticationError", "AccountLockedError", "ROLE_PERMISSIONS",
+            "Session",
+        ):
+            assert not hasattr(auth, name), f"{name} is still there"
 
 
 # ---------------------------------------------------------------------------

@@ -49,12 +49,9 @@ recommend treatment.
   labels, derived measurements and a metadata sheet.
 * Adjusts **brightness, contrast, magnification and sharpness** for reading,
   without touching the pixels any measurement is taken from.
-* Runs from **one account**: an annotator imports, marks up, measures, reviews
-  and exports. Two roles in total, the second adding only the study settings.
-* Gets you back in after a **forgotten password**: a recovery key from the sign
-  in window, an administrator, or a recorded workstation reset. Where an
-  administrator allows it, a **guest** can look at cases and images without an
-  account, and change nothing.
+* Asks only **who is annotating**: a profile is a name, chosen from a list or
+  typed once. No sign in, no password, nothing to be locked out of, and every
+  annotation still carries the name that drew it.
 
 Everything runs on the workstation. There is no network layer and no model.
 
@@ -136,7 +133,7 @@ is written.
 
 ### Administration
 
-Projects, label schema, tolerances, accounts, privacy profile, screening
+Projects, label schema, tolerances, profiles, privacy profile, screening
 thresholds and the decisions that need clinical sign off, each with its current
 state.
 
@@ -189,10 +186,9 @@ python -m aria
 
 Python 3.10 or later. Windows 10 or later, or macOS 11 or later.
 
-The first launch checks the workstation, creates an administrator account and a
-project, then offers the guided tour. An administrator imports and manages but
-does not annotate, so a one person study should also tick the annotator account
-on the account page and sign in as that account to draw.
+The first launch checks the workstation, asks who is annotating, creates a
+project, then offers the guided tour. One profile does the whole job, and
+further profiles are added from the window that opens with ARIA.
 
 ### Building an installable application
 
@@ -226,7 +222,6 @@ aria --self-test          # run the self tests
 aria --system-check       # check this workstation
 aria --verify-bundle PATH # verify a training bundle
 aria --verify-audit       # verify the audit chain
-aria --reset-password NAME # reset a forgotten password
 aria --version            # print every version identifier
 ```
 
@@ -310,25 +305,22 @@ built, it is editable, and the object records that it began as a construction.
 update and delete on the audit and revision tables, and each audit record
 carries the digest of the one before it.
 
-**Two roles, and the line between them is one thing.** An annotator does the
-whole of a case: import, annotate, measure, review, export. An administrator
-does that and runs the study as well, meaning accounts, projects, the label
-schema, the tolerances, the privacy policy and calibration approval. Splitting
-the work further put a wall through the middle of one person's job, and it is
-the audit trail, not the role list, that records who did what.
+**A profile is an assertion, not a credential.** ARIA runs on one workstation
+against one local file, so a passphrase on the way in guarded a door in a
+building with no walls: anybody who can run the program can already open the
+database beside it. What it cost was real, because a forgotten one could shut a
+study out of its own data and the way back was a command line. So there is no
+sign in. Anybody at the workstation may select any profile or make a new one,
+and the history records the profile that was active rather than a person who
+was authenticated. That distinction is written into the audit view so nobody
+mistakes one for the other.
 
-**A guest changes nothing, as a property of the connection.** While a guest is
-signed in, an SQLite authorizer refuses every statement that would change the
-database except an append to the audit log. A guest is not an account and holds
-no row, so a guest cannot be given work, and a panel that forgot to check a
-permission fails rather than writes.
-
-**A forgotten password is never the end of the study.** Each account has a
-recovery key, kept as a digest and replaced every time it is used. When there
-is no key and no other administrator, `aria --reset-password` resets it from
-the workstation. That asks for no proof, because whoever can run it can already
-open the database file; what it adds is that the reset is recorded and can
-never be silent.
+**The name stays, because the research needs it.** Every annotation records
+which profile drew it, agreement between observers is computed by comparing two
+named annotators on one case, duplicate annotation is blinded by annotator, and
+each exported row carries the annotator's pseudonym. Retiring a profile keeps
+it attached to everything it drew, because removing the name would orphan every
+row it produced and silently break any agreement figure computed from them.
 
 ---
 
@@ -339,7 +331,7 @@ aria/
   core/        domain logic, no Qt and no database
   io/          readers, guards, deidentification, exporters
   store/       SQLite schema and the repository
-  security/    accounts, permissions, encryption at rest
+  security/    encryption at rest, and what each action is for
   platform/    compatibility check and self tests
   ui/          the interface
 tests/         acceptance, functional, startup and smoke tests

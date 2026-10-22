@@ -109,12 +109,18 @@ class Controller(QObject):
     def user(self):
         return self.session.user if self.session else None
 
-    def can(self, permission: Permission) -> bool:
-        return has_permission(self.user, permission)
+    def can(self, permission=None) -> bool:
+        """Whether this profile may do something. It always may.
 
-    @property
-    def is_guest(self) -> bool:
-        return self.user is not None and self.user.is_guest
+        Kept as a method rather than deleted from every call site, because the
+        call sites read as documentation of what an action is for, and because
+        a tool that grows a reason to withhold something later has somewhere to
+        put it. There is no such reason today: this is a labelling tool on one
+        workstation, and anybody who can run it can already open the file
+        beside it.
+        """
+        return True
+
 
     def importer(self):
         if self._importer is None:
@@ -144,13 +150,6 @@ class Controller(QObject):
             self.status_message.emit(
                 self.read_only_reason
                 or "This case is open read only, so it cannot be edited.",
-                6000,
-            )
-            return False
-        if not self.can(Permission.EDIT_ANNOTATIONS):
-            self.status_message.emit(
-                "This account cannot edit annotations. Sign in with an annotator "
-                "or reviewer account to make changes.",
                 6000,
             )
             return False
@@ -198,11 +197,8 @@ class Controller(QObject):
     def open_case(self, case_id: str, kind: str = SetKind.PRIMARY, force_read_only: bool = False) -> bool:
         self.close_case()
         try:
-            if self.is_guest:
-                data = self.repo.load_case_for_viewing(case_id, kind)
-            else:
-                annotator_id = self.user.id if self.user else ""
-                data = self.repo.load_case_data(case_id, annotator_id, kind)
+            annotator_id = self.user.id if self.user else ""
+            data = self.repo.load_case_data(case_id, annotator_id, kind)
         except KeyError as exc:
             self.error_raised.emit(
                 "The case could not be opened", str(exc),
@@ -210,26 +206,21 @@ class Controller(QObject):
             )
             return False
 
-        read_only = force_read_only or not self.can(Permission.EDIT_ANNOTATIONS)
-        if self.is_guest:
-            reason = (
-                "A guest sees the image without anybody's annotations, and "
-                "cannot change anything. Sign in with an account to annotate."
-            )
-        elif force_read_only:
+        # Nothing is withheld from a profile, so the only thing here that can
+        # make a case read only is the profile having been retired. Saying
+        # which profile, and where to restore it, is the difference between
+        # knowing what to do and staring at a case that cannot be touched.
+        retired = self.user is not None and not self.user.active
+        read_only = force_read_only or retired
+        if force_read_only:
             reason = "This case was opened read only."
-        elif read_only and self.user is not None:
-            # Both roles annotate, so reaching here means the account itself
-            # cannot: it has been deactivated. Saying which, rather than naming
-            # a role, is the difference between a person knowing what to do and
-            # staring at a case they cannot touch.
+        elif retired:
             reason = (
-                f"The account {self.user.username} is not active, so this case "
-                f"opens read only. An administrator can reactivate it in "
-                f"Administration, Accounts."
+                f"The profile {self.user.display_name or self.user.username} "
+                f"has been retired, so this case opens read only. Restore it "
+                f"in Administration, Profiles, or choose another profile from "
+                f"the File menu."
             )
-        elif read_only:
-            reason = "This account has read only access."
         else:
             reason = ""
 
@@ -298,13 +289,10 @@ class Controller(QObject):
         if self.case_data is None:
             return
         case_id = self.case_data.case.id
-        # A guest's brightness and contrast are its own and are not kept for
-        # the next reader, and a guest never holds a lock to release.
-        if not self.is_guest:
-            try:
-                self.repo.set_display_settings(case_id, self.display_settings.to_dict())
-            except Exception:
-                pass
+        try:
+            self.repo.set_display_settings(case_id, self.display_settings.to_dict())
+        except Exception:
+            pass
             self.repo.release_lock(case_id)
         self._lock_timer.stop()
         self.case_data = None
@@ -884,7 +872,7 @@ class Controller(QObject):
             return False
         if not self.can(Permission.CONFIRM_LATERALITY):
             self.error_raised.emit(
-                "Not permitted", "This account cannot confirm image orientation.",
+                "Not permitted", "This profile cannot confirm image orientation.",
                 "Ask an annotator or reviewer to confirm the orientation.",
             )
             return False
@@ -906,23 +894,18 @@ class Controller(QObject):
             return []
         measurements = self._engine.compute(self.case_data)
         grades = self._engine.grades(self.case_data)
-        if not self.is_guest:
-            # A guest's set exists only in memory, so there is nothing stored
-            # for the values to belong to.
-            try:
-                self.repo.store_measurements(
-                    self.case_data.annotation_set.id, measurements + grades
-                )
-            except Exception:
-                pass
+        try:
+            self.repo.store_measurements(
+                self.case_data.annotation_set.id, measurements + grades
+            )
+        except Exception:
+            pass
         self.measurements_changed.emit(measurements)
         self._validate_timer.start()
         return measurements
 
     def _run_validation(self) -> None:
-        # A guest submits nothing, so a count of what blocks submission would
-        # describe a set nobody is making.
-        if self.case_data is None or self.is_guest:
+        if self.case_data is None:
             self.validation_changed.emit(None)
             return
         result = validate_for_submission(self.case_data, self.schema)
@@ -1087,7 +1070,7 @@ class Controller(QObject):
             return False
         if not self.can(Permission.SUBMIT_ANNOTATIONS):
             self.error_raised.emit(
-                "Not permitted", "This account cannot submit annotations.", "",
+                "Not permitted", "This profile cannot submit annotations.", "",
             )
             return False
         result = self.validate()
@@ -1119,7 +1102,7 @@ class Controller(QObject):
             return False
         if not self.can(Permission.REVIEW_CASES):
             self.error_raised.emit(
-                "Not permitted", "This account cannot review annotation sets.", "",
+                "Not permitted", "This profile cannot review annotation sets.", "",
             )
             return False
         review = Review(

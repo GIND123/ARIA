@@ -341,7 +341,7 @@ class TestWhatTheCalibrationNoticeActuallySays:
         from PySide6.QtWidgets import QApplication
 
         from aria.config import Config
-        from aria.security.auth import AuthService
+        from aria.core.profile import ActiveProfile
         from aria.ui.main_window import MainWindow
 
         config = Config(paths)
@@ -352,7 +352,7 @@ class TestWhatTheCalibrationNoticeActuallySays:
         repo.set_actor(annotator)
         window = MainWindow(
             repo, paths, config,
-            AuthService(repo, config.settings).start_session(annotator),
+            ActiveProfile(annotator),
         )
         try:
             assert window.action_calibrate is not None

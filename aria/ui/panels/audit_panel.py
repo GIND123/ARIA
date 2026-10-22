@@ -43,7 +43,7 @@ PAGE_SIZE = 300
 #: pick from forty event names.
 EVENT_GROUPS = {
     "": "Every event",
-    "session": "Sign in and sessions",
+    "session": "Who was annotating",
     "data": "Import and cases",
     "annotation": "Annotation changes",
     "workflow": "Submission and review",
@@ -53,8 +53,13 @@ EVENT_GROUPS = {
 
 GROUP_EVENTS = {
     "session": {
+        AuditEvent.PROFILE_SELECTED,
+        # Written by versions that signed people in. Kept in the group so that
+        # a history spanning the change still reads as one sequence.
         AuditEvent.LOGIN_SUCCESS, AuditEvent.LOGIN_FAILURE, AuditEvent.LOGOUT,
         AuditEvent.SESSION_TIMEOUT, AuditEvent.PASSWORD_CHANGED,
+        AuditEvent.PASSWORD_RESET, AuditEvent.RECOVERY_KEY_ISSUED,
+        AuditEvent.GUEST_SESSION_STARTED,
     },
     "data": {
         AuditEvent.IMPORT_STARTED, AuditEvent.IMPORT_COMPLETED,

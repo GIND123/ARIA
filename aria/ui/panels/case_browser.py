@@ -364,7 +364,7 @@ class CaseBrowser(QWidget):
             assign_menu.addSeparator()
             for user in self.controller.repo.list_users():
                 assign_menu.addAction(
-                    f"{user.display_name} ({user.role_display})",
+                    f"{user.display_name} ({user.pseudonym})",
                     lambda _checked=False, u=user.id: self._assign(case_id, u),
                 )
 

@@ -131,12 +131,6 @@ class MainWindow(QMainWindow):
         self.set_module("cases")
         self._update_case_actions()
 
-        self._idle_timer = QTimer(self)
-        self._idle_timer.setInterval(20_000)
-        self._idle_timer.timeout.connect(self._check_idle)
-        if self.settings.lock_on_idle:
-            self._idle_timer.start()
-
     # -- construction --------------------------------------------------------
 
     def _build_workspace(self) -> None:
@@ -278,15 +272,10 @@ class MainWindow(QMainWindow):
         self.action_backup = action(
             "Back up database", self.backup_database, tip="Write a consistent copy of the database."
         )
-        self.action_change_password = action(
-            "Change password", self.change_password,
-            tip="Choose a new password for this account.",
+        self.action_switch_profile = action(
+            "Switch profile", self.switch_profile,
+            tip="Annotate as somebody else. Nothing is signed out of.",
         )
-        self.action_recovery_key = action(
-            "New recovery key", self.new_recovery_key,
-            tip="Replace this account's recovery key. The old one stops working.",
-        )
-        self.action_sign_out = action("Sign out", self.sign_out, tip="End this session.")
         self.action_quit = action("Exit", self.close, "Ctrl+Q")
 
         # Edit
@@ -435,10 +424,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.action_backup)
         file_menu.addSeparator()
-        file_menu.addAction(self.action_change_password)
-        file_menu.addAction(self.action_recovery_key)
-        file_menu.addSeparator()
-        file_menu.addAction(self.action_sign_out)
+        file_menu.addAction(self.action_switch_profile)
         file_menu.addAction(self.action_quit)
 
         edit_menu = bar.addMenu("&Edit")
@@ -674,14 +660,25 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self.status_save)
         bar.addPermanentWidget(self.status_user)
 
-        user = self.session.user if self.session else None
-        if user is not None and user.is_guest:
-            self.status_user.setText("Guest, looking only")
-        elif user is not None:
-            self.status_user.setText(
-                f"{user.display_name} ({user.role_display}) as {user.pseudonym}"
-            )
+        self._show_active_profile()
         bar.showMessage("Ready", 3000)
+
+    def _show_active_profile(self) -> None:
+        """Say whose work this is, and that it was asserted rather than proved.
+
+        Somebody reading the history months later needs to know which of the
+        two it was, and the honest answer is that a profile is selected.
+        """
+        user = self.session.user if self.session else None
+        if user is None:
+            self.status_user.setText("")
+            return
+        self.status_user.setText(f"{user.display_name} as {user.pseudonym}")
+        self.status_user.setToolTip(
+            f"Annotations are recorded against {user.display_name}, and "
+            f"exported as {user.pseudonym}. A profile is a name, not a sign "
+            f"in. Change it with File, Switch profile."
+        )
 
     # -- wiring --------------------------------------------------------------
 
@@ -754,7 +751,7 @@ class MainWindow(QMainWindow):
         if self.module_combo.findData(key) < 0:
             # Not offered in the selector, so not reachable another way
             # either. A menu entry such as Review, Open review module would
-            # otherwise open a module the account was never given.
+            # otherwise open a module the selector does not offer.
             return
         panel = self.panels[key]
         self.module_stack.setCurrentWidget(panel)
@@ -812,7 +809,7 @@ class MainWindow(QMainWindow):
         )
 
     def _apply_permissions(self) -> None:
-        """Hide modules this account cannot use, rather than showing failures."""
+        """Enable what this profile may do. Nothing is withheld from one."""
         user = self.session.user if self.session else None
         for index in reversed(range(self.module_combo.count())):
             key = self.module_combo.itemData(index)
@@ -838,14 +835,6 @@ class MainWindow(QMainWindow):
         # away in one go: an export by another name.
         for a in (self.action_backup, self.action_open_data_folder):
             a.setEnabled(self.controller.can(Permission.EXPORT_DATA))
-        # A guest has no password to change and changes nothing on the
-        # workstation either, its preferences and security policy included.
-        guest = user is not None and user.is_guest
-        for a in (
-            self.action_preferences, self.action_change_password,
-            self.action_recovery_key,
-        ):
-            a.setEnabled(not guest)
 
     # -- case lifecycle ------------------------------------------------------
 
@@ -1657,11 +1646,6 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(
                 stylesheet(palette, settings.font_point_size, settings.ui_scale)
             )
-        if settings.lock_on_idle:
-            self._idle_timer.start()
-        else:
-            self._idle_timer.stop()
-
     # -- help ----------------------------------------------------------------
 
     def start_tour(self) -> None:
@@ -1694,66 +1678,45 @@ class MainWindow(QMainWindow):
                 "The user guide is in the docs folder of the installation.",
             )
 
-    # -- session -------------------------------------------------------------
+    # -- who is annotating ---------------------------------------------------
 
-    def _check_idle(self) -> None:
-        if self.session is None or self.session.timeout_minutes <= 0:
-            return
-        if self.session.is_expired():
-            self._idle_timer.stop()
-            self.controller.close_case()
-            QMessageBox.information(
-                self, "Session timed out",
-                f"This session was locked after "
-                f"{self.session.timeout_minutes} minutes without activity.\n\n"
-                f"Your work was saved as you went, so nothing was lost.",
-            )
-            self.sign_out(timed_out=True)
+    def switch_profile(self) -> None:
+        """Carry on as somebody else, in the same window.
 
-    def sign_out(self, timed_out: bool = False) -> None:
-        self.controller.close_case()
-        self.closing.emit()
-        self.close()
-
-    def change_password(self) -> None:
-        user = self.session.user if self.session else None
-        if user is None or user.is_guest:
-            return
-        from ..security.auth import AuthService
-        from .dialogs.login_dialog import ChangePasswordDialog
-
-        dialog = ChangePasswordDialog(AuthService(self.repo, self.settings), user, parent=self)
-        if dialog.exec():
-            self.statusBar().showMessage("Password changed.", 5000)
-
-    def new_recovery_key(self) -> None:
-        """Replace the account's recovery key, after asking for its password.
-
-        The password is asked for because an unattended session should not be
-        enough to take a key away and use it later.
+        This used to close ARIA and send you back to a sign in. There is
+        nothing to sign out of now, and a second annotator sitting down at the
+        same workstation to mark up the same study should not have to wait for
+        the application to start again. What changes is the name the next
+        annotation, and the next line of the history, is recorded against.
         """
-        user = self.session.user if self.session else None
-        if user is None or user.is_guest:
-            return
-        from ..security.auth import AuthService, verify_password
-        from .dialogs.recovery_dialog import RecoveryKeyDialog
+        from PySide6.QtWidgets import QDialog
 
-        password, ok = QInputDialog.getText(
-            self, "New recovery key",
-            "Enter this account's password. The new key replaces the old one, "
-            "which stops working.",
-            QLineEdit.Password,
+        from ..core.profile import ActiveProfile, record_profile
+        from .dialogs.profile_dialog import ProfileDialog
+
+        dialog = ProfileDialog(self.repo, self.config, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.profile is None:
+            return
+
+        current = self.session.user if self.session else None
+        if current is not None and dialog.profile.id == current.id:
+            return
+
+        # The open case is closed first: its lock is held by the profile that
+        # opened it, and the work in progress belongs to that name.
+        self.controller.close_case()
+        self.repo.release_all_locks()
+
+        self.session = ActiveProfile(dialog.profile)
+        self.controller.session = self.session
+        self.repo.set_actor(dialog.profile)
+        record_profile(self.repo, dialog.profile)
+        self._show_active_profile()
+        self._update_case_actions()
+        self.statusBar().showMessage(
+            f"Annotating as {dialog.profile.display_name}", 6000
         )
-        if not ok:
-            return
-        if not verify_password(password, user.password_hash, user.password_salt):
-            QMessageBox.warning(
-                self, "New recovery key",
-                "The password is not correct, so the recovery key was not changed.",
-            )
-            return
-        key = AuthService(self.repo, self.settings).issue_recovery_key(user)
-        RecoveryKeyDialog(key, user.username, self).exec()
+
 
     def _on_dirty(self, dirty: bool) -> None:
         if dirty:
@@ -1814,13 +1777,6 @@ class MainWindow(QMainWindow):
 
     # -- window --------------------------------------------------------------
 
-    def event(self, event):
-        if self.session is not None and event.type() in (
-            event.Type.MouseButtonPress, event.Type.KeyPress, event.Type.Wheel
-        ):
-            self.session.touch()
-        return super().event(event)
-
     def closeEvent(self, event) -> None:
         if self.settings.remember_window_geometry:
             self.settings.window_geometry = bytes(self.saveGeometry().toHex()).decode()
@@ -1828,9 +1784,7 @@ class MainWindow(QMainWindow):
             self.settings.layout = self.workspace.layout_key
             self.config.save()
         self.controller.close_case()
-        if not self.controller.is_guest:
-            # A guest holds no locks, and its connection refuses the delete.
-            self.repo.release_all_locks()
+        self.repo.release_all_locks()
         super().closeEvent(event)
 
     def reset_panel_layout(self) -> None:

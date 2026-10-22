@@ -39,7 +39,7 @@ from ...core.audit import AuditEvent
 from ...core.models import Project, Role, utc_now
 from ...core.schema import LABEL_CLASSES, ProjectSchema, ThresholdRule
 from ...io.deident import BUILTIN_PROFILES
-from ...security.auth import AuthService, Permission
+from ...security.auth import Permission
 from ..theme import PALETTE
 from ..widgets.common import (
     Banner,
@@ -281,7 +281,7 @@ class AdminPanel(QWidget):
 
     def _save_schema(self) -> None:
         if not self.controller.can(Permission.MANAGE_SCHEMA):
-            QMessageBox.information(self, "Not permitted", "This account cannot change the schema.")
+            QMessageBox.information(self, "Not permitted", "This profile cannot change the schema.")
             return
         schema = self.controller.schema
         required = []
@@ -441,12 +441,12 @@ class AdminPanel(QWidget):
     # -- users ---------------------------------------------------------------
 
     def _build_users_section(self) -> None:
-        self.users_section = CollapsibleSection("Accounts", self, False, "users")
+        self.users_section = CollapsibleSection("Profiles", self, False, "users")
         body = self.users_section.body_layout()
 
         self.user_table = QTableWidget(0, 5, self)
         self.user_table.setHorizontalHeaderLabels(
-            ["Name", "Role", "Pseudonym", "Calibration set", "Active"]
+            ["Name", "Pseudonym", "Added", "Calibration set", "Active"]
         )
         self.user_table.verticalHeader().setVisible(False)
         self.user_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -456,12 +456,23 @@ class AdminPanel(QWidget):
         body.addWidget(self.user_table)
 
         row = QHBoxLayout()
-        self.add_user_button = make_button("Add account", "user", parent=self)
-        self.reset_password_button = make_button("Reset password", parent=self)
-        self.toggle_active_button = make_button("Activate or deactivate", parent=self)
-        for b in (self.add_user_button, self.reset_password_button, self.toggle_active_button):
+        self.add_user_button = make_button("Add profile", "user", parent=self)
+        self.rename_user_button = make_button("Rename", parent=self)
+        self.toggle_active_button = make_button("Retire or restore", parent=self)
+        for b in (self.add_user_button, self.rename_user_button, self.toggle_active_button):
             row.addWidget(b)
         body.addLayout(row)
+
+        profile_note = QLabel(
+            "A profile is a name, not an account: there is no password to set "
+            "or reset. Retiring one keeps it out of the list without detaching "
+            "it from the annotations it made, because removing the name would "
+            "orphan every row it produced.",
+            self,
+        )
+        profile_note.setWordWrap(True)
+        profile_note.setProperty("dim", True)
+        body.addWidget(profile_note)
 
         self.approve_calibration_button = make_button(
             "Approve calibration set", "check",
@@ -473,25 +484,10 @@ class AdminPanel(QWidget):
         )
         body.addWidget(self.approve_calibration_button)
 
-        self.guest_access = QCheckBox("Allow guest access on this workstation", self)
-        body.addWidget(self.guest_access)
-        guest_note = QLabel(
-            "Anyone at this workstation can then open ARIA as a guest, without a "
-            "password. A guest sees the case list and the images, without "
-            "anybody's annotations, and cannot annotate, change, export or "
-            "administer anything. Guest sessions are recorded in the audit "
-            "history.",
-            self,
-        )
-        guest_note.setWordWrap(True)
-        guest_note.setProperty("dim", True)
-        body.addWidget(guest_note)
-
         self.add_user_button.clicked.connect(self._add_user)
-        self.reset_password_button.clicked.connect(self._reset_password)
+        self.rename_user_button.clicked.connect(self._rename_user)
         self.toggle_active_button.clicked.connect(self._toggle_active)
         self.approve_calibration_button.clicked.connect(self._approve_calibration)
-        self.guest_access.toggled.connect(self._set_guest_access)
 
         self.scroll.add_section(self.users_section)
 
@@ -500,8 +496,8 @@ class AdminPanel(QWidget):
         self.user_table.setRowCount(len(users))
         for row, user in enumerate(users):
             self.user_table.setItem(row, 0, QTableWidgetItem(user.display_name or user.username))
-            self.user_table.setItem(row, 1, QTableWidgetItem(user.role_display))
-            self.user_table.setItem(row, 2, QTableWidgetItem(user.pseudonym))
+            self.user_table.setItem(row, 1, QTableWidgetItem(user.pseudonym))
+            self.user_table.setItem(row, 2, QTableWidgetItem(user.created_at[:10]))
             self.user_table.setItem(
                 row, 3,
                 QTableWidgetItem("passed" if user.calibration_passed else "not recorded"),
@@ -519,43 +515,44 @@ class AdminPanel(QWidget):
         return self.controller.repo.get_user(item.data(Qt.UserRole)) if item else None
 
     def _add_user(self) -> None:
-        if not self.controller.can(Permission.MANAGE_USERS):
-            return
-        from ..dialogs.account_dialog import AccountDialog
+        """Make a profile. One field, because that is all a profile is."""
+        from ...core.profile import ProfileError, ProfileService
 
-        dialog = AccountDialog(self.controller, self)
-        if dialog.exec():
-            self._refresh_users()
-
-    def _reset_password(self) -> None:
-        user = self._selected_user()
-        if user is None or not self.controller.can(Permission.MANAGE_USERS):
-            return
-        service = AuthService(self.controller.repo, self.controller.settings)
-        temporary = service.reset_password(self.controller.user, user)
-        QMessageBox.information(
-            self, "Password reset",
-            f"A temporary password was set for {user.username}:\n\n{temporary}\n\n"
-            f"They must change it at the next sign in. Pass it to them directly "
-            f"rather than by email.",
+        name, ok = QInputDialog.getText(
+            self, "Add profile",
+            "Name as it should appear in the history and in exports:",
         )
+        if not ok or not name.strip():
+            return
+        try:
+            created = ProfileService(self.controller.repo).create(name)
+        except ProfileError as exc:
+            QMessageBox.warning(self, "The profile could not be added", str(exc))
+            return
         self._refresh_users()
-
-    def _set_guest_access(self, allowed: bool) -> None:
-        settings = self.controller.settings
-        if not self.controller.can(Permission.MANAGE_USERS) or settings.allow_guest_access == allowed:
-            return
-        settings.allow_guest_access = allowed
-        self.controller.config.save()
-        self.controller.repo.log(
-            AuditEvent.POLICY_CHANGED, "settings", "allow_guest_access",
-            before={"allow_guest_access": not allowed},
-            after={"allow_guest_access": allowed},
-            detail=(
-                "Guest access turned on. The sign in window now offers to "
-                "continue as a guest." if allowed else "Guest access turned off."
-            ),
+        QMessageBox.information(
+            self, "Profile added",
+            f"{created.display_name} can now be chosen when ARIA opens. "
+            f"Exports identify this profile as {created.pseudonym}.",
         )
+
+    def _rename_user(self) -> None:
+        from ...core.profile import ProfileError, ProfileService
+
+        user = self._selected_user()
+        if user is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename profile", "New name:", text=user.display_name
+        )
+        if not ok or not name.strip():
+            return
+        try:
+            ProfileService(self.controller.repo).rename(user, name)
+        except ProfileError as exc:
+            QMessageBox.warning(self, "The profile could not be renamed", str(exc))
+            return
+        self._refresh_users()
 
     def _toggle_active(self) -> None:
         user = self._selected_user()
@@ -935,13 +932,10 @@ class AdminPanel(QWidget):
         for widget in (
             self.new_project_button, self.rename_project_button,
             self.archive_project_button, self.save_schema_button,
-            self.add_user_button, self.reset_password_button,
-            self.toggle_active_button, self.save_privacy_button,
+            self.add_user_button,
+            self.toggle_active_button, self.rename_user_button,
+            self.save_privacy_button,
             self.save_dicom_button,
         ):
             widget.setEnabled(allowed)
 
-        self.guest_access.blockSignals(True)
-        self.guest_access.setChecked(bool(self.controller.settings.allow_guest_access))
-        self.guest_access.blockSignals(False)
-        self.guest_access.setEnabled(self.controller.can(Permission.MANAGE_USERS))

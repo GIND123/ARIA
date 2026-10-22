@@ -55,6 +55,7 @@ step "Recording third party licences"
 
 step "Generating icon files"
 "$VENV_PY" "$ROOT/scripts/make_icons.py"
+"$VENV_PY" "$ROOT/scripts/make_logo.py" || fail "The mark could not be written."
 if [[ -d "$ROOT/packaging/aria.iconset" ]]; then
     # iconutil produces a better icns than a single resized image.
     iconutil -c icns "$ROOT/packaging/aria.iconset" -o "$ROOT/packaging/aria.icns" \

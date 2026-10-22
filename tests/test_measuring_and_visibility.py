@@ -33,7 +33,7 @@ def window(paths, repo, annotator, project, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     from aria.config import Config
-    from aria.security.auth import AuthService
+    from aria.core.profile import ActiveProfile
     from aria.ui.main_window import MainWindow
 
     config = Config(paths)
@@ -43,7 +43,7 @@ def window(paths, repo, annotator, project, monkeypatch):
 
     app = QApplication.instance() or QApplication([])
     repo.set_actor(annotator)
-    session = AuthService(repo, config.settings).start_session(annotator)
+    session = ActiveProfile(annotator)
 
     w = MainWindow(repo, paths, config, session)
     w.resize(1400, 900)

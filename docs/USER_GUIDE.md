@@ -12,7 +12,7 @@ recommend treatment.
 ## Contents
 
 1. [First run](#first-run)
-2. [Signing in](#signing-in)
+2. [Choosing a profile](#choosing-a-profile)
 3. [The workspace](#the-workspace)
 4. [Adjusting the image](#adjusting-the-image)
 5. [Measuring and choosing what you see](#measuring-and-choosing-what-you-see)
@@ -36,7 +36,9 @@ recommend treatment.
 
 ## First run
 
-The first time ARIA opens it does three things.
+The first time ARIA opens it does three things. Every launch after that
+shows the loader while the database is opened, checked and backed up, and says
+which of those it is on.
 
 **It checks this workstation.** Processor, memory, free space, display,
 storage durability, encryption and image preparation speed are measured against
@@ -44,21 +46,12 @@ the requirements. Every row says what was measured, what the requirement is and,
 where it is not met, what to do about it. You can continue past a failed
 requirement deliberately, and that choice is recorded.
 
-**It creates your account.** Everything you do in ARIA is recorded against an
-account, which is what makes the history meaningful. The password is stored as a
-memory hard digest, never as text, so ARIA cannot tell you a forgotten one.
-
-**It gives you a recovery key.** The next page shows a key like
-`K7QM-3XRP-9DWB-HN2T-F4ZC`, which resets the password if you ever forget it.
-It is shown only once, so copy it into a password manager or save it and file it
-somewhere other people cannot read. Setup waits until you tick that you have
-kept it. A second administrator account, added afterwards, is a further way back
-in.
-
-This account is an administrator, which means it can do everything: import
-images, annotate and measure them, export the results, and add further
-accounts. There is nothing to choose here. Colleagues you add later are
-annotators by default, which is the same minus the study settings.
+**It asks who is annotating.** One name, and nothing to remember. Everything
+you do is recorded against that name, which is what makes the history
+meaningful and what agreement between observers is computed from. There is no
+password: see [Choosing a profile](#choosing-a-profile) for what that trade
+buys and what it costs. Colleagues add themselves later from the window that
+opens with ARIA, without anybody having to issue them anything.
 
 **It creates a project.** A project holds its own cases, label schema,
 tolerances and privacy profile.
@@ -68,87 +61,66 @@ controls, and can be skipped. Help, Guided tour brings it back at any time.
 
 ---
 
-## Signing in
+## Choosing a profile
 
-Enter your username and password. After the number of failed attempts your
-administrator has configured, the account locks for a set period.
+ARIA does not sign anybody in. Every launch after the first opens a short
+window that asks who is annotating. Pick a name from the list and press
+**Start annotating**, or type a name and press **Add profile** to make a new
+one. The profile you used last is already selected, so the usual answer is the
+Enter key.
 
-If you were given a temporary password you will be asked to change it before you
-can continue.
+**A profile is a name, not a password.** Anybody at this workstation can
+choose any profile or make a new one. There is nothing to prove on the way in
+and nothing to forget.
 
-If your account has no recovery key, ARIA offers to create one after you sign
-in, and keeps offering until there is one. File, Change password and File, New
-recovery key are there whenever you want them; a new key replaces the old one,
-which stops working.
+That is a deliberate trade, and it is worth saying what each side of it is.
+ARIA keeps its data in a file on this workstation. Anyone who can run the
+program can already open that file, so a passphrase on the way in guarded a
+door in a building with no walls, while a forgotten one could shut a study out
+of its own data for good. What the name is actually for is the research: every
+annotation is recorded against it, agreement between observers is measured by
+comparing two named annotators on one case, and each exported row carries the
+annotator's pseudonym. Those are the things that would break if the name went
+away. The passphrase was never one of them.
 
-### Forgotten your password
+The status bar, bottom right, says which profile is active and the pseudonym
+its work is exported under. The audit history records the profile that was
+active rather than a person who was authenticated, and says so in as many
+words, so that nobody reading it later mistakes one for the other.
 
-There are three ways back in. Try them in this order.
+### Working as somebody else
 
-1. **Your recovery key.** Choose **Forgot password?** in the sign in window,
-   enter your username, the recovery key and a new password. Case, spaces and
-   dashes in the key do not matter. The key is then spent and ARIA shows you
-   its replacement, which you keep in the same way. A correct key also lifts a
-   lockout from too many failed sign ins.
-2. **Another administrator.** Administration, Accounts, Reset password sets a
-   temporary password, which you change at your next sign in.
-3. **The workstation reset**, when there is no key and no other administrator.
-   Anyone at this workstation can run it from a terminal, and the Forgot
-   password? window shows the exact command with a Copy button:
+**File, Switch profile** changes the name without closing ARIA. The open case
+is closed first and its lock released, because the work in progress belongs to
+the profile that started it; everything already saved stays attached to the
+name that drew it. This is the normal way two observers annotate the same study
+on one workstation.
 
-   ```
-   aria --reset-password yourname
-   ```
+### Retiring a profile
 
-   It prints a temporary password (in a packaged build without a console it
-   shows it in a window instead), and you choose a new password at the next
-   sign in. Run it without a name to list the accounts.
+Administration, Profiles holds the list. **Retire or restore** takes a profile
+out of the picker without detaching it from anything it drew: the annotations
+stay attributed to it, because removing the name would orphan every row it
+produced and silently break any agreement figure computed from them. A case
+opened while the active profile is retired opens read only, and the status bar
+says which profile and what to do about it.
 
-   It asks for no proof because it cannot: whoever can run programs as this
-   computer's account can already open the database file. What it adds is that
-   the reset is recorded in the audit history, with the computer account that
-   made it, and that it is never silent, because the old password stops
-   working.
+**Rename** corrects a spelling. It is the same profile afterwards, so the rows
+already written stay where they are.
 
-### Signing in as a guest
+Two profiles cannot share a name. ARIA refuses the second one, because two
+identical names cannot be told apart in an export or in the history.
 
-Where an administrator has turned guest access on, the sign in window also
-offers **Continue as guest**. A guest needs no password and can do very little:
-it sees the case list and the images, with nobody's annotations, and can zoom,
-pan and adjust the display. It cannot annotate, calibrate, import, export,
-review, open the patient factors, change preferences or back up the database,
-and whatever it adjusts is not kept. Guest sessions, and every case a guest
-opens, are recorded in the audit history.
+### What a profile can do
 
-A guest is not a third role. It is a session without an account, and no account
-can be given it.
+Everything. There are no roles and nothing is withheld. One person can import
+images, annotate and measure them, review them, export the results and the
+training bundle, and run the study: projects, the label schema, the
+tolerances, the privacy policy.
 
-### What each role can do
-
-There are two.
-
-| Role | Does the work on a case | Runs the study |
-| --- | --- | --- |
-| Annotator | yes | no |
-| Administrator | yes | yes |
-
-**Doing the work** means the whole of it: importing images, annotating and
-measuring them, reviewing them, and exporting the results and the training
-bundle. Most people only ever need this.
-
-**Running the study** is the six things an annotator cannot do: add or change
-accounts, create projects, change the label schema, change the tolerances,
-change the privacy policy, and approve a calibration set.
-
-Setup creates an administrator, so the person who installs ARIA can do
-everything from the start. Add colleagues from Administration, Accounts, where
-annotator is the default.
-
-An account that cannot do something is told so plainly. Menu entries it cannot
-use are greyed and modules it cannot open are not offered. A case only ever
-opens read only for a reason that has nothing to do with roles: somebody else
-is working on it, you chose to open it read only, or the account has been
-deactivated. The status bar says which.
+A case only ever opens read only for a reason that has nothing to do with who
+you are: somebody else is working on it, you chose to open it read only, or the
+active profile has been retired. The status bar says which.
 
 ---
 
@@ -738,10 +710,9 @@ stays inactive until both enabled and recorded as clinically approved, with the
 name of the clinician who approved it. Its outcome is always labelled as a
 screening rule, never as a diagnosis.
 
-**Accounts** creates users, resets passwords and records that an annotator has
-completed the calibration set. **Allow guest access on this workstation** turns
-on Continue as guest in the sign in window; it is off until you turn it on, and
-turning it on or off is recorded.
+**Profiles** adds a profile, renames one, retires or restores one, and records
+that an annotator has completed the calibration set. There are no passwords to
+set or reset.
 
 **Privacy profile** chooses the deidentification profile and lists terms the
 institution declares prohibited, which every export is scanned for.
@@ -777,8 +748,9 @@ Uninstalling ARIA does not remove annotation data.
 
 ## When something goes wrong
 
-**A forgotten password** has three ways back, described under
-[Forgotten your password](#forgotten-your-password).
+**Nobody can be locked out.** There is no password to forget. If the profile
+you were using has been retired, choose another from File, Switch profile, or
+restore it in Administration, Profiles.
 
 **Tools, Run diagnostics** runs the self tests against the installed code and
 reports what each one checked. Save the report and include it when asking for
@@ -804,7 +776,6 @@ aria --self-test                 run the self tests
 aria --system-check              check this workstation
 aria --verify-bundle PATH        verify a training bundle
 aria --verify-audit              verify the audit chain
-aria --reset-password [NAME]     reset a forgotten password, or list accounts
 aria --version                   print the version block
 ```
 

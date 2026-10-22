@@ -160,12 +160,16 @@ class Paths:
 class Settings:
     """User and workstation preferences.
 
-    Institution policy settings (session timeout, password rules, retention)
-    live here so they can be configured to an approved policy (NFR 005).
+    Institution policy settings (retention, encryption at rest, prohibited
+    identifier terms) live here so they can be configured to an approved
+    policy (NFR 005).
     """
 
     # -- first run ---------------------------------------------------------
     first_run_completed: bool = False
+    #: The profile chosen last, so the picker opens on it. A convenience, not
+    #: a credential: anything may select any profile.
+    last_profile_id: str = ""
     tour_completed: bool = False
     tour_version_seen: str = ""
     compatibility_check_passed: bool = False
@@ -212,19 +216,10 @@ class Settings:
     backup_keep_count: int = 10
 
     # -- security policy ---------------------------------------------------
-    session_timeout_minutes: int = 30
-    lock_on_idle: bool = True
-    password_min_length: int = 10
-    password_require_mixed_case: bool = True
-    password_require_digit: bool = True
-    password_require_symbol: bool = False
-    password_max_age_days: int = 365
-    max_failed_logins: int = 5
-    lockout_minutes: int = 15
-    #: Lets anyone at this workstation open ARIA as a guest, without a
-    #: password, to look at cases and images and change nothing. Off until an
-    #: administrator turns it on, because a guest is nobody in particular.
-    allow_guest_access: bool = False
+    # The timeout, the passphrase rules, the lockout and the guest switch went
+    # with the sign in they belonged to. A settings file written by a version
+    # that had them still loads: ``from_dict`` keeps only the fields that are
+    # still declared here and drops the rest.
     encrypt_at_rest: bool = True
     retention_days: int = 0            # zero means no automatic deletion
     #: Institution declared prohibited identifier terms, checked on export.
@@ -259,23 +254,6 @@ class Settings:
             "max_pixels": int(self.max_pixels_millions) * 1_000_000,
             "max_batch_files": int(self.max_batch_files),
         }
-
-    def validate_password(self, password: str) -> list:
-        """Check a password against the configured policy."""
-        problems: list = []
-        if len(password) < self.password_min_length:
-            problems.append(
-                f"The password must be at least {self.password_min_length} characters."
-            )
-        if self.password_require_mixed_case and (
-            password.lower() == password or password.upper() == password
-        ):
-            problems.append("The password must contain both upper and lower case letters.")
-        if self.password_require_digit and not any(c.isdigit() for c in password):
-            problems.append("The password must contain at least one digit.")
-        if self.password_require_symbol and password.isalnum():
-            problems.append("The password must contain at least one symbol.")
-        return problems
 
 
 class Config:
