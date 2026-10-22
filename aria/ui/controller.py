@@ -112,6 +112,10 @@ class Controller(QObject):
     def can(self, permission: Permission) -> bool:
         return has_permission(self.user, permission)
 
+    @property
+    def is_guest(self) -> bool:
+        return self.user is not None and self.user.is_guest
+
     def importer(self):
         if self._importer is None:
             from ..io.importer import Importer
@@ -194,8 +198,11 @@ class Controller(QObject):
     def open_case(self, case_id: str, kind: str = SetKind.PRIMARY, force_read_only: bool = False) -> bool:
         self.close_case()
         try:
-            annotator_id = self.user.id if self.user else ""
-            data = self.repo.load_case_data(case_id, annotator_id, kind)
+            if self.is_guest:
+                data = self.repo.load_case_for_viewing(case_id, kind)
+            else:
+                annotator_id = self.user.id if self.user else ""
+                data = self.repo.load_case_data(case_id, annotator_id, kind)
         except KeyError as exc:
             self.error_raised.emit(
                 "The case could not be opened", str(exc),
@@ -204,7 +211,12 @@ class Controller(QObject):
             return False
 
         read_only = force_read_only or not self.can(Permission.EDIT_ANNOTATIONS)
-        if force_read_only:
+        if self.is_guest:
+            reason = (
+                "A guest sees the image without anybody's annotations, and "
+                "cannot change anything. Sign in with an account to annotate."
+            )
+        elif force_read_only:
             reason = "This case was opened read only."
         elif read_only and self.user is not None:
             # Both roles annotate, so reaching here means the account itself
@@ -286,11 +298,14 @@ class Controller(QObject):
         if self.case_data is None:
             return
         case_id = self.case_data.case.id
-        try:
-            self.repo.set_display_settings(case_id, self.display_settings.to_dict())
-        except Exception:
-            pass
-        self.repo.release_lock(case_id)
+        # A guest's brightness and contrast are its own and are not kept for
+        # the next reader, and a guest never holds a lock to release.
+        if not self.is_guest:
+            try:
+                self.repo.set_display_settings(case_id, self.display_settings.to_dict())
+            except Exception:
+                pass
+            self.repo.release_lock(case_id)
         self._lock_timer.stop()
         self.case_data = None
         self.image = None
@@ -891,18 +906,23 @@ class Controller(QObject):
             return []
         measurements = self._engine.compute(self.case_data)
         grades = self._engine.grades(self.case_data)
-        try:
-            self.repo.store_measurements(
-                self.case_data.annotation_set.id, measurements + grades
-            )
-        except Exception:
-            pass
+        if not self.is_guest:
+            # A guest's set exists only in memory, so there is nothing stored
+            # for the values to belong to.
+            try:
+                self.repo.store_measurements(
+                    self.case_data.annotation_set.id, measurements + grades
+                )
+            except Exception:
+                pass
         self.measurements_changed.emit(measurements)
         self._validate_timer.start()
         return measurements
 
     def _run_validation(self) -> None:
-        if self.case_data is None:
+        # A guest submits nothing, so a count of what blocks submission would
+        # describe a set nobody is making.
+        if self.case_data is None or self.is_guest:
             self.validation_changed.emit(None)
             return
         result = validate_for_submission(self.case_data, self.schema)

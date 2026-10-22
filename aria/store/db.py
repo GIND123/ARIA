@@ -13,11 +13,19 @@ Append only history
 The audit table and the revision table carry triggers that reject every UPDATE
 and DELETE. Append only is therefore a property of the database file itself, not
 a convention the application code is trusted to follow (NFR 004).
+
+Guest sessions
+--------------
+While a guest is signed in the connection refuses every change except an append
+to the audit log, through an authorizer SQLite consults as it prepares each
+statement. A guest changing nothing is therefore a property of the connection,
+not a rule every panel has to remember.
 """
 
 from __future__ import annotations
 
 import sqlite3
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -48,7 +56,10 @@ CREATE TABLE IF NOT EXISTS users (
     calibration_approved_by TEXT,
     must_change_password   INTEGER NOT NULL DEFAULT 0,
     failed_logins          INTEGER NOT NULL DEFAULT 0,
-    locked_until           TEXT
+    locked_until           TEXT,
+    recovery_hash          TEXT NOT NULL DEFAULT '',
+    recovery_salt          TEXT NOT NULL DEFAULT '',
+    recovery_created_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -379,6 +390,14 @@ END;
 """
 
 
+#: What a connection may still do while changes are refused: read, and open and
+#: close the transaction an audit append is written in.
+_READING_ACTIONS = frozenset({
+    sqlite3.SQLITE_READ, sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION,
+    sqlite3.SQLITE_RECURSIVE, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+})
+
+
 class Database:
     """Owns the SQLite connection for one process.
 
@@ -392,6 +411,7 @@ class Database:
         self.read_only = read_only
         self._lock = threading.RLock()
         self._conn: sqlite3.Connection | None = None
+        self._changes_refused = False
 
     # -- connection ----------------------------------------------------------
 
@@ -477,6 +497,51 @@ class Database:
     def query_one(self, sql: str, params=()):
         rows = self.query(sql, params)
         return rows[0] if rows else None
+
+    # -- refusing changes ----------------------------------------------------
+
+    def refuse_changes(self, appends_allowed_to=("audit_log",)) -> None:
+        """Refuse every change from now on, apart from appends to these tables.
+
+        Used for the length of a guest session. A statement that would change
+        anything else is denied by SQLite while it is being prepared and fails
+        with "not authorized", so a code path that forgot to check a permission
+        fails rather than writes. The audit log stays open so that what a guest
+        looked at is still recorded.
+        """
+        allowed = frozenset(appends_allowed_to)
+
+        def authorise(action, first, second, database, _trigger):
+            if action in _READING_ACTIONS:
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_PRAGMA and second is None:
+                # Without an argument a pragma reads a setting or runs a check.
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_INSERT and database == "main" and first in allowed:
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
+
+        conn = self.connect()
+        with self._lock:
+            # Installing an authorizer expires every statement already
+            # prepared, so one cached before this point is checked as well.
+            conn.set_authorizer(authorise)
+            self._changes_refused = True
+
+    def accept_changes(self) -> None:
+        """Lift ``refuse_changes``."""
+        with self._lock:
+            if self._conn is None or not self._changes_refused:
+                return
+            if sys.version_info >= (3, 11):
+                self._conn.set_authorizer(None)
+            else:  # None clears an authorizer only from Python 3.11 on.
+                self._conn.set_authorizer(lambda *_args: sqlite3.SQLITE_OK)
+            self._changes_refused = False
+
+    @property
+    def changes_refused(self) -> bool:
+        return self._changes_refused
 
     # -- schema --------------------------------------------------------------
 
@@ -695,6 +760,18 @@ MIGRATIONS: dict = {
             " DEFAULT ''",
             "ALTER TABLE cases ADD COLUMN exclusion_reason TEXT NOT NULL"
             " DEFAULT ''",
+        ],
+    },
+    6: {
+        "description": (
+            "Add a recovery key to accounts. A forgotten password could only be "
+            "reset by an administrator, and the only administrator forgetting "
+            "theirs locked the study out of itself."
+        ),
+        "statements": [
+            "ALTER TABLE users ADD COLUMN recovery_hash TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN recovery_salt TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN recovery_created_at TEXT",
         ],
     },
 }

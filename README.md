@@ -51,6 +51,10 @@ recommend treatment.
   without touching the pixels any measurement is taken from.
 * Runs from **one account**: an annotator imports, marks up, measures, reviews
   and exports. Two roles in total, the second adding only the study settings.
+* Gets you back in after a **forgotten password**: a recovery key from the sign
+  in window, an administrator, or a recorded workstation reset. Where an
+  administrator allows it, a **guest** can look at cases and images without an
+  account, and change nothing.
 
 Everything runs on the workstation. There is no network layer and no model.
 
@@ -222,6 +226,7 @@ aria --self-test          # run the self tests
 aria --system-check       # check this workstation
 aria --verify-bundle PATH # verify a training bundle
 aria --verify-audit       # verify the audit chain
+aria --reset-password NAME # reset a forgotten password
 aria --version            # print every version identifier
 ```
 
@@ -256,7 +261,7 @@ keeping work safe · what to do when something goes wrong.
 ## Testing
 
 ```bash
-pytest tests -q                       # everything, 120 tests
+pytest tests -q                       # everything, 491 tests
 pytest tests/test_acceptance.py -v    # the specification's acceptance criteria
 pytest tests/test_startup.py -v       # the real application startup path
 pytest -m smoke                       # the fast self tests
@@ -311,6 +316,19 @@ does that and runs the study as well, meaning accounts, projects, the label
 schema, the tolerances, the privacy policy and calibration approval. Splitting
 the work further put a wall through the middle of one person's job, and it is
 the audit trail, not the role list, that records who did what.
+
+**A guest changes nothing, as a property of the connection.** While a guest is
+signed in, an SQLite authorizer refuses every statement that would change the
+database except an append to the audit log. A guest is not an account and holds
+no row, so a guest cannot be given work, and a panel that forgot to check a
+permission fails rather than writes.
+
+**A forgotten password is never the end of the study.** Each account has a
+recovery key, kept as a digest and replaced every time it is used. When there
+is no key and no other administrator, `aria --reset-password` resets it from
+the workstation. That asks for no proof, because whoever can run it can already
+open the database file; what it adds is that the reset is recorded and can
+never be silent.
 
 ---
 

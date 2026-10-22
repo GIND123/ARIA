@@ -21,7 +21,9 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QSizePolicy,
@@ -276,6 +278,14 @@ class MainWindow(QMainWindow):
         self.action_backup = action(
             "Back up database", self.backup_database, tip="Write a consistent copy of the database."
         )
+        self.action_change_password = action(
+            "Change password", self.change_password,
+            tip="Choose a new password for this account.",
+        )
+        self.action_recovery_key = action(
+            "New recovery key", self.new_recovery_key,
+            tip="Replace this account's recovery key. The old one stops working.",
+        )
         self.action_sign_out = action("Sign out", self.sign_out, tip="End this session.")
         self.action_quit = action("Exit", self.close, "Ctrl+Q")
 
@@ -400,6 +410,7 @@ class MainWindow(QMainWindow):
         self.action_integrity = action(
             "Check database integrity", self.check_integrity,
         )
+        self.action_open_data_folder = action("Open data folder", self.open_data_folder)
 
         # Help
         self.action_tour = action(
@@ -423,6 +434,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.action_bundle)
         file_menu.addSeparator()
         file_menu.addAction(self.action_backup)
+        file_menu.addSeparator()
+        file_menu.addAction(self.action_change_password)
+        file_menu.addAction(self.action_recovery_key)
         file_menu.addSeparator()
         file_menu.addAction(self.action_sign_out)
         file_menu.addAction(self.action_quit)
@@ -498,6 +512,7 @@ class MainWindow(QMainWindow):
         annotate_menu.addAction(self.action_submit)
 
         review_menu = bar.addMenu("&Review")
+        self.review_menu = review_menu
         review_menu.addAction(
             QAction("Open review module", self, triggered=lambda: self.set_module("review"))
         )
@@ -523,9 +538,7 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self.action_verify_audit)
         tools_menu.addAction(self.action_integrity)
         tools_menu.addSeparator()
-        tools_menu.addAction(
-            QAction("Open data folder", self, triggered=self.open_data_folder)
-        )
+        tools_menu.addAction(self.action_open_data_folder)
 
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.action_tour)
@@ -662,7 +675,9 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self.status_user)
 
         user = self.session.user if self.session else None
-        if user is not None:
+        if user is not None and user.is_guest:
+            self.status_user.setText("Guest, looking only")
+        elif user is not None:
             self.status_user.setText(
                 f"{user.display_name} ({user.role_display}) as {user.pseudonym}"
             )
@@ -735,6 +750,11 @@ class MainWindow(QMainWindow):
 
     def set_module(self, key: str) -> None:
         if key not in self.panels:
+            return
+        if self.module_combo.findData(key) < 0:
+            # Not offered in the selector, so not reachable another way
+            # either. A menu entry such as Review, Open review module would
+            # otherwise open a module the account was never given.
             return
         panel = self.panels[key]
         self.module_stack.setCurrentWidget(panel)
@@ -811,6 +831,21 @@ class MainWindow(QMainWindow):
         self.action_bundle.setEnabled(self.controller.can(Permission.CREATE_BUNDLE))
         self.action_verify_audit.setEnabled(self.controller.can(Permission.VERIFY_AUDIT))
         self.tools_toolbar.setVisible(self.controller.can(Permission.VIEW_IMAGE))
+        self.case_browser.import_button.setEnabled(self.controller.can(Permission.IMPORT_CASES))
+        self.action_diagnostics.setEnabled(self.controller.can(Permission.RUN_DIAGNOSTICS))
+        self.review_menu.setEnabled(self.controller.can(Permission.REVIEW_CASES))
+        # A backup, or the folder the files sit in, is the whole study taken
+        # away in one go: an export by another name.
+        for a in (self.action_backup, self.action_open_data_folder):
+            a.setEnabled(self.controller.can(Permission.EXPORT_DATA))
+        # A guest has no password to change and changes nothing on the
+        # workstation either, its preferences and security policy included.
+        guest = user is not None and user.is_guest
+        for a in (
+            self.action_preferences, self.action_change_password,
+            self.action_recovery_key,
+        ):
+            a.setEnabled(not guest)
 
     # -- case lifecycle ------------------------------------------------------
 
@@ -1441,6 +1476,8 @@ class MainWindow(QMainWindow):
     # -- import --------------------------------------------------------------
 
     def import_images(self) -> None:
+        if not self.controller.can(Permission.IMPORT_CASES):
+            return
         if self.controller.project is None:
             QMessageBox.information(
                 self, "No project",
@@ -1456,6 +1493,8 @@ class MainWindow(QMainWindow):
             self._run_import(paths)
 
     def import_folder(self) -> None:
+        if not self.controller.can(Permission.IMPORT_CASES):
+            return
         if self.controller.project is None:
             QMessageBox.information(
                 self, "No project", "Create or select a project before importing images."
@@ -1676,6 +1715,46 @@ class MainWindow(QMainWindow):
         self.closing.emit()
         self.close()
 
+    def change_password(self) -> None:
+        user = self.session.user if self.session else None
+        if user is None or user.is_guest:
+            return
+        from ..security.auth import AuthService
+        from .dialogs.login_dialog import ChangePasswordDialog
+
+        dialog = ChangePasswordDialog(AuthService(self.repo, self.settings), user, parent=self)
+        if dialog.exec():
+            self.statusBar().showMessage("Password changed.", 5000)
+
+    def new_recovery_key(self) -> None:
+        """Replace the account's recovery key, after asking for its password.
+
+        The password is asked for because an unattended session should not be
+        enough to take a key away and use it later.
+        """
+        user = self.session.user if self.session else None
+        if user is None or user.is_guest:
+            return
+        from ..security.auth import AuthService, verify_password
+        from .dialogs.recovery_dialog import RecoveryKeyDialog
+
+        password, ok = QInputDialog.getText(
+            self, "New recovery key",
+            "Enter this account's password. The new key replaces the old one, "
+            "which stops working.",
+            QLineEdit.Password,
+        )
+        if not ok:
+            return
+        if not verify_password(password, user.password_hash, user.password_salt):
+            QMessageBox.warning(
+                self, "New recovery key",
+                "The password is not correct, so the recovery key was not changed.",
+            )
+            return
+        key = AuthService(self.repo, self.settings).issue_recovery_key(user)
+        RecoveryKeyDialog(key, user.username, self).exec()
+
     def _on_dirty(self, dirty: bool) -> None:
         if dirty:
             self.status_save.set_state("Saving", "info", "A change is being written.")
@@ -1749,7 +1828,9 @@ class MainWindow(QMainWindow):
             self.settings.layout = self.workspace.layout_key
             self.config.save()
         self.controller.close_case()
-        self.repo.release_all_locks()
+        if not self.controller.is_guest:
+            # A guest holds no locks, and its connection refuses the delete.
+            self.repo.release_all_locks()
         super().closeEvent(event)
 
     def reset_panel_layout(self) -> None:

@@ -5,6 +5,10 @@ workstation cannot do the work after importing a study wastes real time. A
 failed check can be overridden deliberately, with the override recorded, since
 a research machine sometimes falls short of a requirement in a way the team has
 already accepted.
+
+The account gets its recovery key here too. Setup is the one moment every
+installation passes through, and the first administrator forgetting the password
+is the case where nobody else can help.
 """
 
 from __future__ import annotations
@@ -31,11 +35,12 @@ from PySide6.QtWidgets import (
 from ...core.models import Project, Role
 from ...core.schema import ProjectSchema
 from ...platform.system_check import CheckStatus, run_system_check
-from ...security.auth import AuthService
+from ...security.auth import AuthService, generate_recovery_key
 from ...version import APP_LONG_NAME, APP_NAME, APP_VERSION
 from ..icons import application_icon, icon as make_icon
 from ..theme import PALETTE
 from ..widgets.common import Banner, StatusChip
+from .recovery_dialog import RecoveryKeyPanel
 
 
 class WelcomePage(QWizardPage):
@@ -59,7 +64,8 @@ class WelcomePage(QWizardPage):
             "Three things happen next:\n\n"
             "1.  This workstation is checked against the requirements, so you know "
             "before you start whether it can do the work.\n\n"
-            "2.  An administrator account is created. Everything you do in ARIA is "
+            "2.  An administrator account is created, with a recovery key for "
+            "the day its password is forgotten. Everything you do in ARIA is "
             "recorded against an account, which is what makes the audit history "
             "meaningful.\n\n"
             "3.  A first project is created, holding its own label schema, "
@@ -278,10 +284,10 @@ class AccountPage(QWizardPage):
         layout.addWidget(self.status)
 
         note = QLabel(
-            "Passwords are stored as a memory hard digest, never as text. If this "
-            "password is lost there is no way to recover the account, so an "
-            "administrator should create a second administrator account once "
-            "setup is finished.",
+            "Passwords are stored as a memory hard digest, never as text, so "
+            "ARIA cannot tell you a forgotten one. The next page gives you a "
+            "recovery key that resets it instead. A second administrator "
+            "account, added once setup is finished, is another way back in.",
             self,
         )
         note.setWordWrap(True)
@@ -339,6 +345,33 @@ class AccountPage(QWizardPage):
 
     def isComplete(self) -> bool:
         return getattr(self, "_complete", False)
+
+
+class RecoveryKeyPage(QWizardPage):
+    """Shows the recovery key the new account will be given at Finish."""
+
+    def __init__(self, key: str, parent=None):
+        super().__init__(parent)
+        self.setTitle("Recovery key")
+        self.setSubTitle(
+            "The way back into this account if the password is ever forgotten."
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        self.panel = RecoveryKeyPanel(key, "", self)
+        layout.addWidget(self.panel)
+
+        self.kept = QCheckBox("I have kept this recovery key somewhere safe", self)
+        self.kept.toggled.connect(lambda _checked: self.completeChanged.emit())
+        layout.addWidget(self.kept)
+        layout.addStretch(1)
+
+    def initializePage(self) -> None:
+        self.panel.set_account(str(self.field("username") or "").strip())
+
+    def isComplete(self) -> bool:
+        return self.kept.isChecked()
 
 
 class ProjectPage(QWizardPage):
@@ -416,6 +449,9 @@ class FirstRunWizard(QWizard):
         self.created_user = None
         self.created_project = None
         self.show_tour = True
+        #: Shown on its page before the account exists, and given to the
+        #: account when it is created at Finish.
+        self.recovery_key = generate_recovery_key()
 
         self.setWindowTitle(f"{APP_NAME} setup")
         self.setWindowIcon(application_icon())
@@ -426,11 +462,13 @@ class FirstRunWizard(QWizard):
         self.welcome_page = WelcomePage(self)
         self.compatibility_page = CompatibilityPage(paths, config, self)
         self.account_page = AccountPage(config, self)
+        self.recovery_page = RecoveryKeyPage(self.recovery_key, self)
         self.project_page = ProjectPage(self)
 
         self.addPage(self.welcome_page)
         self.addPage(self.compatibility_page)
         self.addPage(self.account_page)
+        self.addPage(self.recovery_page)
         self.addPage(self.project_page)
 
         self.setButtonText(QWizard.FinishButton, "Finish setup")
@@ -451,6 +489,7 @@ class FirstRunWizard(QWizard):
 
         self.repo.set_actor(user)
         self.created_user = user
+        service.issue_recovery_key(user, self.recovery_key)
 
         # One account, one password, and it can do the whole job. Colleagues
         # are added afterwards from Administration, Accounts.

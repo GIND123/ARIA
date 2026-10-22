@@ -26,6 +26,9 @@ class AuditEvent(str, Enum):
     LOGOUT = "logout"
     SESSION_TIMEOUT = "session_timeout"
     PASSWORD_CHANGED = "password_changed"
+    PASSWORD_RESET = "password_reset"
+    RECOVERY_KEY_ISSUED = "recovery_key_issued"
+    GUEST_SESSION_STARTED = "guest_session_started"
 
     # Data
     IMPORT_STARTED = "import_started"

@@ -49,20 +49,28 @@ class Role(str):
     That is the whole difference. Splitting the work further put a wall in the
     middle of one person's job, and the audit trail, not the role list, is what
     records who did what.
+
+    A guest is not a third role. It is what a session runs as when somebody
+    opens ARIA without an account, on a workstation where an administrator has
+    allowed that: it can look and it can change nothing. No account is ever
+    given it, so it is not in ``ALL``.
     """
 
     ANNOTATOR = "annotator"
     #: Stored as its original value so that accounts created by earlier
     #: versions keep working without being rewritten.
     ADMIN = "project_administrator"
+    GUEST = "guest"
 
-    #: Listed in the order the account dialog offers them, least privileged
-    #: first, because the first entry is the one a new account gets.
+    #: The roles an account can hold, in the order the account dialog offers
+    #: them, least privileged first, because the first entry is the one a new
+    #: account gets.
     ALL = (ANNOTATOR, ADMIN)
 
     DISPLAY = {
         ANNOTATOR: "Annotator",
         ADMIN: "Administrator",
+        GUEST: "Guest",
     }
 
     #: Roles used by earlier versions, and the role each one becomes. A
@@ -98,10 +106,24 @@ class User:
     must_change_password: bool = False
     failed_logins: int = 0
     locked_until: str | None = None
+    #: Digest of the recovery key, which resets a forgotten password without
+    #: an administrator. Kept the way a password is, never as text, and
+    #: replaced every time it is used.
+    recovery_hash: str = ""
+    recovery_salt: str = ""
+    recovery_created_at: str | None = None
 
     @property
     def role_display(self) -> str:
         return Role.DISPLAY.get(self.role, self.role)
+
+    @property
+    def has_recovery_key(self) -> bool:
+        return bool(self.recovery_hash)
+
+    @property
+    def is_guest(self) -> bool:
+        return self.role == Role.GUEST
 
 
 @dataclass

@@ -221,6 +221,10 @@ class Settings:
     password_max_age_days: int = 365
     max_failed_logins: int = 5
     lockout_minutes: int = 15
+    #: Lets anyone at this workstation open ARIA as a guest, without a
+    #: password, to look at cases and images and change nothing. Off until an
+    #: administrator turns it on, because a guest is nobody in particular.
+    allow_guest_access: bool = False
     encrypt_at_rest: bool = True
     retention_days: int = 0            # zero means no automatic deletion
     #: Institution declared prohibited identifier terms, checked on export.

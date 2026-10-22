@@ -271,6 +271,11 @@ def run(argv=None) -> int:
         user = dialog.user
         session = service.start_session(user)
         repository.set_actor(user)
+        if user.is_guest:
+            # Until the window closes the connection refuses every change but
+            # an audit append, so nothing a guest does can reach the study,
+            # whichever panel it is done from.
+            database.refuse_changes()
         projects = repository.list_projects()
         project = projects[0] if projects else None
 
@@ -315,6 +320,7 @@ def run(argv=None) -> int:
     exit_code = app.exec()
 
     try:
+        database.accept_changes()
         repository.release_all_locks()
         database.checkpoint()
         database.close()
